@@ -1,0 +1,40 @@
+                                                                                  2024-09-18
+
+3.3 Explanation
+
+Chinese Remainder Theorem: By leveraging the fact that 𝑝, 𝑞, and
+𝑟 are co-prime, we can apply the CRT to reconstruct 𝑠 modulo 𝑝 ∗ 𝑞 ∗ 𝑟,
+which directly gives us the value of 𝑠. This is feasible because the product
+𝑃 [0] ∗ 𝑄[0] ∗ 𝑅[0] is smaller than 𝑝 ∗ 𝑞 ∗ 𝑟.
+                                    ⎧𝑠 = F1(𝑠) mod 𝑝
+                                    {
+                                    ⎨𝑠 = F2(𝑠) mod 𝑞
+                                    {𝑠 = F3(𝑠) mod 𝑟
+                                    ⎩
+           ⇒ {CRT([F1(𝑠), F2(𝑠), F3(𝑠)], [𝑝, 𝑞, 𝑟]) = 𝑠 mod(𝑝 ∗ 𝑞 ∗ 𝑟)
+
+And ﬁnally:
+               𝑃 [0] ∗ 𝑄[0] ∗ 𝑅[0] < 𝑝 ∗ 𝑞 ∗ 𝑟 ⇒ 𝑠 mod(𝑝 ∗ 𝑞 ∗ 𝑟) = 𝑠
+
+
+
+Recovering the Flag: After recovering 𝑠, we need to add 𝑅[0] to reverse
+the addition in the original script. Once done, we can XOR the result with
+the masked ﬂag value s XOR flag to recover the original ﬂag.
+
+
+Note: To recover 𝑅 𝑥-coordinate, (needed to recover 𝑠 before s += int(R[0])), the
+code extracts the 𝑦-coordinate 𝑦𝑅 of the elliptic curve point 𝑅 and then computes the
+possible 𝑥-coordinates that satisfy the curve’s equation. Mathematically, this is equivalent
+to solving the elliptic curve equation for 𝑥 given 𝑦 = 𝑦𝑅 and 𝑧 = 1 in −𝑥3 − 𝑥2 ∗ 𝑧 + 𝑦2 ∗
+𝑧 − 𝑥 ∗ 𝑧2 + 26959946667150639794667015087019630673557916260026308143510066298878 ∗
+𝑧3 = 0. So by substituting 𝑦 = 𝑦𝑅 and 𝑧 = 1 (the 𝑧 value is used for projective elliptic curves),
+the code transforms the elliptic curve equation into an univariate polynomial in 𝑥 and ﬁnds
+the roots (possible 𝑥-values) that correspond to 𝑦𝑅 . These roots are stored in xRs for further
+iteration.
+
+
+
+
+                                                                                      Ectario
+                                             7/8

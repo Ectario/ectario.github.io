@@ -1,0 +1,28 @@
+                                                               2024-09-18
+
+3 How to solve
+3.1 Recovering 𝑟
+
+To solve this challenge, we need to reverse the process:
+
+
+1. The ﬁrst step is to retrieve the random scalar 𝑟. Since we know that the
+order of the curve is prime and every element is invertible, we can compute
+the inverse of 𝑟 if we can determine it.
+
+
+2. We also know a part of the ﬂag structure, such as that it begins with
+"3C{". This information helps us guess one of the bytes and use it to com-
+pute 𝑟. Speciﬁcally, by lifting the known byte and comparing the result to
+the output from the script, we can perform a discrete logarithm to recover
+𝑟.
+
+
+3. Once we have 𝑟, we can reverse the point multiplication and retrieve the
+original ﬂag bytes.
+
+
+
+
+                                                                   Ectario
+                                   5/8

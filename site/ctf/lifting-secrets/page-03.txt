@@ -1,0 +1,21 @@
+                                                               2024-09-18
+
+1.2 Known infos
+
+Goal: The ﬂag is being encoded through elliptic curve point multiplications
+and masking. We need to break the encoding to retrieve the original ﬂag.
+Informations from chall.py:
+p = 2^222 - 117
+mask = 0x1fffffffffffff
+r = randrange(1, p)
+
+The challenge involves an elliptic curve deﬁned over the ﬁnite ﬁeld 𝐹𝑝 ,
+where 𝑝 is supposed to be a “strong prime.” The ﬂag bytes are converted
+to elliptic curve points and then obfuscated using a random scalar 𝑟 and a
+mask. Our goal is to recover the original ﬂag from this transformation.
+
+
+
+
+                                                                   Ectario
+                                  3/8

@@ -1,0 +1,20 @@
+                                                                2024-09-18
+
+3 How to solve
+3.1 Recovering the Flag
+
+To solve this challenge, we just need to compute the 11th root of the ci-
+phertext:
+1. Given that FLAG11 < 𝑛, we know that no wrapping occurred during the
+encryption, so the ciphertext is simply FLAG11 .
+
+
+2. By computing the 11th root of the ciphertext, we can recover the original
+                             √
+value of the ﬂag, as FLAG = 11 ct.
+
+
+
+
+                                                                    Ectario
+                                   5/8

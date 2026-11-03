@@ -1,0 +1,13 @@
+                                                            2024-09-18
+
+4 Conclusion
+This challenge highlights the power of the Chinese Remainder Theorem in
+modular arithmetic, especially when working with cryptographic systems
+based on ﬁnite ﬁelds. By correctly reconstructing 𝑠 through CRT and re-
+versing the XOR operation, we are able to successfully recover the ﬂag.
+
+
+
+
+                                                               Ectario
+                                8/8

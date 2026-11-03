@@ -1,0 +1,71 @@
+<p>From the <code>chall.py</code>:</p>
+<pre data-language="python"><code>from Crypto.Util.number import *
+from flag import FLAG
+
+FLAG = bytes_to_long(FLAG)
+e = 11
+nbits = 2048
+p = getPrime(nbits)
+q = getPrime(nbits)
+n = p*q
+
+ct = pow(FLAG, e, n)
+
+print(f"{ct=}")</code></pre>
+<h3 id="section-1">Known infos</h3>
+<p><strong>Goal</strong>: The flag has been encrypted using RSA with an exponent <img alt="𝑒 = 11" class="pdf-inline-math" height="15.500" src="formula-03-01.svg" style="width:2.9292em;height:1.1071em" width="41.009"/>.
+Our goal is to decrypt the ciphertext, but given the ciphertext size, we need
+to consider a specific attack vector.</p>
+<p>Informations from <code>chall.py</code>:</p>
+<pre data-language="python"><code>e = 11
+n = p*q                # where p and q are 2048-bit primes
+ct = FLAG**11 % n</code></pre>
+<p>The challenge involves RSA encryption where the modulus <img alt="𝑛" class="pdf-inline-math" height="15.500" src="formula-03-02.svg" style="width:0.7353em;height:1.1071em" width="10.294"/> is approximately 4096 bits. The encrypted flag is <img alt="FLAG11mod 𝑛" class="pdf-inline-math" height="17.500" src="formula-03-03.svg" style="width:6.5357em;height:1.2500em" width="91.500"/>, but the ciphertext
+length gives a critical clue for solving this challenge.</p>
+<h2 id="section-2">Analyse</h2>
+<h3 id="section-3">Key Points</h3>
+<p><strong>1.  Ciphertext  Length:</strong>  The  ciphertext <img alt="ct" class="pdf-inline-math" height="15.500" src="formula-04-01.svg" style="width:0.9288em;height:1.1071em" width="13.004"/>  is  significantly  smaller  than
+expected—about 2351 bits, while the modulus <img alt="𝑛" class="pdf-inline-math" height="15.500" src="formula-04-02.svg" style="width:0.7477em;height:1.1071em" width="10.468"/> is around 4096 bits. This
+difference  in  size  suggests  something  important:  the  value  of <img alt="FLAG11" class="pdf-inline-math" height="17.500" src="formula-04-03.svg" style="width:3.6310em;height:1.2500em" width="50.833"/>  is
+smaller than <img alt="𝑛" class="pdf-inline-math" height="15.500" src="formula-04-04.svg" style="width:0.7262em;height:1.1071em" width="10.167"/>, meaning the encryption did not “wrap around” modulo <img alt="𝑛" class="pdf-inline-math" height="15.500" src="formula-04-05.svg" style="width:0.7265em;height:1.1071em" width="10.171"/>.</p>
+<p><strong>2. Unlikely Probability:</strong> If <img alt="FLAG11mod 𝑛" class="pdf-inline-math" height="17.500" src="formula-04-06.svg" style="width:6.5357em;height:1.2500em" width="91.500"/> were truly wrapped, the high
+bits of the ciphertext would not be zero. The fact that the ciphertext is only
+2351 bits implies that the most significant 1745 bits of the result are zero,
+which is extremely improbable in a random RSA scenario. The probability
+of this occurring, assuming uniform distribution, is roughly <img alt="(12)1745" class="pdf-inline-math" height="25.500" src="formula-04-07.svg" style="width:3.0595em;height:1.8214em" width="42.833"/>, which
+is virtually impossible. This strongly suggests that <img alt="FLAG11&lt; 𝑛" class="pdf-inline-math" height="17.500" src="formula-04-08.svg" style="width:5.6424em;height:1.2500em" width="78.994"/>, meaning
+that the encryption did not involve modular reduction.</p>
+<p><strong>3. Direct Root Extraction:</strong> Since <img alt="FLAG11&lt; 𝑛" class="pdf-inline-math" height="16.833" src="formula-04-09.svg" style="width:5.6310em;height:1.2024em" width="78.833"/>, the ciphertext is simply
+<img alt="FLAG11" class="pdf-inline-math" height="16.833" src="formula-04-10.svg" style="width:3.6310em;height:1.2024em" width="50.833"/>, and no modular arithmetic has affected the result. This allows us
+to directly compute the 11th root of the ciphertext to recover the flag.</p>
+<h2 id="section-4">How to solve</h2>
+<h3 id="section-5">Recovering the Flag</h3>
+<p>To solve this challenge, we just need to compute the 11th root of the ciphertext:
+<strong>1.</strong> Given that <img alt="FLAG11&lt; 𝑛" class="pdf-inline-math" height="16.833" src="formula-05-01.svg" style="width:5.6310em;height:1.2024em" width="78.833"/>, we know that no wrapping occurred during the
+encryption, so the ciphertext is simply <img alt="FLAG11" class="pdf-inline-math" height="16.833" src="formula-05-02.svg" style="width:3.6397em;height:1.2024em" width="50.955"/>.</p>
+<p><strong>2.</strong> By computing the 11th root of the ciphertext, we can recover the original
+value of the flag, as <img alt="FLAG =11√ct" class="pdf-inline-math" height="26.833" src="formula-05-03.svg" style="width:6.1125em;height:1.9167em" width="85.576"/>.</p>
+<h3 id="section-6">Solve script</h3>
+<pre data-language="python"><code>from Crypto.Util.number import *
+from libnum import nroot
+
+e = 11
+ct = int(open("output.txt", "r").read().strip().split("=")[1])
+
+assert ct.bit_length() &lt; 3000
+
+print(long_to_bytes(nroot(ct, e)))</code></pre>
+<h3 id="section-7">Explanation</h3>
+<p><strong>Ciphertext  Size:</strong>  The  key  insight  is  that  the  ciphertext  size  is  much
+smaller than the modulus <img alt="𝑛" class="pdf-inline-math" height="15.500" src="formula-07-01.svg" style="width:0.7262em;height:1.1071em" width="10.167"/>, suggesting that <img alt="FLAG11&lt; 𝑛" class="pdf-inline-math" height="16.833" src="formula-07-02.svg" style="width:5.6337em;height:1.2024em" width="78.872"/>. This allows us
+to avoid dealing with the modulus and directly compute the 11th root of
+the ciphertext to retrieve the flag.</p>
+<p><strong>Root Calculation:</strong> By using the function <code>nroot(ct, 11)</code>, we can efficiently
+compute the 11th root of the ciphertext and convert the result back into
+bytes to retrieve the flag.</p>
+<h2 id="section-8">Conclusion</h2>
+<p>This challenge illustrates a case where the RSA encryption process did not
+involve modular wrapping. By carefully analyzing the size of the ciphertext
+and understanding the implications, we were able to directly extract the
+flag by computing the 11th root of the ciphertext without needing to factor
+<img alt="𝑛" class="pdf-inline-math" height="15.500" src="formula-08-01.svg" style="width:0.7262em;height:1.1071em" width="10.167"/> or perform more complex RSA attacks.</p>

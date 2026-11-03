@@ -1,0 +1,13 @@
+                                                              2024-09-18
+
+4 Conclusion
+This challenge highlights the importance of correctly deﬁning prime ﬁelds
+in cryptographic algorithms and demonstrates how small mistakes, such as
+the use of bitwise XOR instead of exponentiation, can lead to vulnerabili-
+ties like breaking the discrete logarithm problem.
+
+
+
+
+                                                                  Ectario
+                                  8/8

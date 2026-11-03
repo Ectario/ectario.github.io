@@ -1,0 +1,31 @@
+                                                               2024-09-18
+
+1.2 Known infos
+
+Goal: The challenge generates three elliptic curve points 𝑃 , 𝑄, and 𝑅 from
+three diﬀerent ﬁnite ﬁelds. The goal is to recover the ﬂag, which has been
+XORed with a masked value 𝑠, derived from the 𝑥-coordinates of these
+points.
+Informations from chall.py:
+p = 2^222 - 117
+q = 2^221 - 3
+r = 2^224 - 2^96 + 1
+
+print(f"{F1(s)=}") # i.e. s % p
+print(f"{F2(s)=}") # i.e. s % q
+print(f"{F3(s)=}") # i.e. s % r
+
+assert s > FLAG      # i.e. the xor will be a one-time pad
+
+print(f"s XOR flag={s ^^ FLAG}")
+print(f"{R[1]=}")
+
+The 𝑥-coordinates of the points 𝑃 , 𝑄, and 𝑅 are multiplied together to
+produce 𝑠, and then masked. Our goal is to reverse this process and recover
+the original ﬂag.
+
+
+
+
+                                                                   Ectario
+                                  3/8

@@ -1,0 +1,21 @@
+                                                         2024-09-18
+
+3.2 Solve script
+
+from Crypto.Util.number import *
+from libnum import nroot
+
+e = 11
+ct = int(open("output.txt", "r").read().strip().split("=")[1])
+
+assert ct.bit_length() < 3000
+
+print(long_to_bytes(nroot(ct, e)))
+
+                     ——————————-
+
+
+
+
+                                                            Ectario
+                                6/8

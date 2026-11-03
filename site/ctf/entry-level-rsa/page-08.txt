@@ -1,0 +1,14 @@
+                                                               2024-09-18
+
+4 Conclusion
+This challenge illustrates a case where the RSA encryption process did not
+involve modular wrapping. By carefully analyzing the size of the ciphertext
+and understanding the implications, we were able to directly extract the
+ﬂag by computing the 11th root of the ciphertext without needing to factor
+𝑛 or perform more complex RSA attacks.
+
+
+
+
+                                                                   Ectario
+                                  8/8

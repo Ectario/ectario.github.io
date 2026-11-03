@@ -1,0 +1,43 @@
+                                                                                 2024-09-18
+
+3.3 Explanation
+
+Discrete Logarithm Attack: We leverage the fact that the modulus p is
+smaller than expected due to the XOR mistake. This allows us to compute
+the discrete logarithm and recover 𝑟 more easily than intended.
+Brute-forcing 𝑟: As an alternative method, we brute-force 𝑟 by iterating
+over possible values and reversing the point multiplication to recover the
+original bytes.
+Finding x-coordinate:
+Let 𝑃 be the original elliptic curve point, and let 𝑟 be a random scalar used
+to compute 𝑄:
+                                          𝑄 = 𝑟.𝑃
+
+Given 𝑄, our goal is to recover 𝑃 . Since the challenge guarantees that the
+order of the elliptic curve is prime, the scalar 𝑟 is invertible. Thus, we can
+ﬁnd 𝑟-1 (the inverse of 𝑟) such that 𝑟.𝑟-1 = 1.
+
+                   𝑄 = 𝑟.𝑃 ⇔ 𝑟-1 .𝑄 = 𝑟-1 .(𝑟.𝑃 ) ⇔ 𝑟-1 .𝑟.𝑃 = 𝑃
+
+Thus, we recover the original point 𝑃 :
+
+                                         𝑃 = 𝑟-1 .𝑄
+
+                             ————————————-
+Since the point 𝑃 is now recovered, we can easily access its 𝑥-coordinate
+(denoted 𝑥𝑃 ) by extracting the ﬁrst component of 𝑃
+Note: The line x_value = [...] checks whether the 𝑥-coordinate of point 𝑃 , 𝑃 [0], is greater
+than 40. If it is, the value is directly interpreted as the ASCII code. If it’s less than 40, it
+means the value was wrapped around due to the modulo 𝑝 (since 𝑝 = 107 and ASCII charac-
+ters like “{“ are larger than 107). In this case, 𝑝 is added to reverse the wrap and recover the
+correct value.
+
+                             ————————————-
+Final Check: Once we recover the ﬂag, we assert that the two methods
+(discrete logarithm and brute-force) yield the same 𝑟.
+
+
+
+
+                                                                                      Ectario
+                                            7/8

@@ -1,0 +1,19 @@
+                                                             2024-09-18
+
+3.3 Explanation
+
+Ciphertext Size: The key insight is that the ciphertext size is much
+smaller than the modulus 𝑛, suggesting that FLAG11 < 𝑛. This allows us
+to avoid dealing with the modulus and directly compute the 11th root of
+the ciphertext to retrieve the ﬂag.
+
+
+Root Calculation: By using the function nroot(ct, 11), we can eﬃciently
+compute the 11th root of the ciphertext and convert the result back into
+bytes to retrieve the ﬂag.
+
+
+
+
+                                                                Ectario
+                                 7/8

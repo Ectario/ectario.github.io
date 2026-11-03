@@ -1,0 +1,134 @@
+<p>From the <code>chall.py</code>:</p>
+<pre data-language="python"><code>from sage.all import *
+from Crypto.Util.number import bytes_to_long, inverse
+from flag import FLAG
+from random import randrange
+
+p = 2^222 - 117 # strong prime from https://safecurves.cr.yp.to/
+F = FiniteField(p)
+E = EllipticCurve(F, [0, 1, 0, 1, 3]) 
+
+assert E.order().is_prime()
+
+texts = bytearray(FLAG)
+mask = 0x1fffffffffffff
+r = randrange(1, p)
+for i, x in enumerate(texts):
+    lifted = False
+    added = 0
+    while not lifted:
+        try:
+            P = E.lift_x(F(x))
+            Q = r*P
+            print(f"{added}: {int(Q.xy()[0])^mask}")
+            lifted = True
+        except:
+            x+=1
+            added+=1</code></pre>
+<h3 id="section-1">Known infos</h3>
+<p><strong>Goal</strong>: The flag is being encoded through elliptic curve point multiplications
+and masking. We need to break the encoding to retrieve the original flag.</p>
+<p>Informations from <code>chall.py</code>:</p>
+<pre data-language="python"><code>p = 2^222 - 117
+mask = 0x1fffffffffffff
+r = randrange(1, p)</code></pre>
+<p>The  challenge  involves  an  elliptic  curve  defined  over  the  finite  field <img alt="𝐹𝑝" class="pdf-inline-math" height="18.167" src="formula-03-01.svg" style="width:1.2032em;height:1.2976em" width="16.845"/>,
+where <img alt="𝑝" class="pdf-inline-math" height="15.500" src="formula-03-02.svg" style="width:0.6811em;height:1.1071em" width="9.536"/> is supposed to be a “strong prime.” The flag bytes are converted
+to elliptic curve points and then obfuscated using a random scalar <img alt="𝑟" class="pdf-inline-math" height="15.500" src="formula-03-03.svg" style="width:0.5423em;height:1.1071em" width="7.593"/> and a
+mask. Our goal is to recover the original flag from this transformation.</p>
+<h2 id="section-2">Analyse</h2>
+<h3 id="section-3">Key Points</h3>
+<p><strong>1. Elliptic Curve:</strong> The curve used is defined by the equation <span class="inline-math-scroll pdf-math-sequence" tabindex="0"><img alt="𝑦2= 𝑥3+" class="pdf-inline-math" height="17.786" src="formula-04-01.svg" style="width:4.4529em;height:1.2704em" width="62.340"/><img alt="𝑥2+ 𝑥 + 3" class="pdf-inline-math" height="17.500" src="formula-04-02.svg" style="width:4.6786em;height:1.2500em" width="65.500"/></span>. The challenge gives the assurance that the curve’s order is a
+prime number (<code>assert E.order().is_prime()</code>), which implies that all non-
+zero elements of the group are invertible. This property will be crucial when
+trying to undo the multiplication by <img alt="𝑟" class="pdf-inline-math" height="15.500" src="formula-04-03.svg" style="width:0.5357em;height:1.1071em" width="7.500"/>.</p>
+<p><strong>2. Prime Field used:</strong> The value of <img alt="𝑝" class="pdf-inline-math" height="15.571" src="formula-04-04.svg" style="width:0.6813em;height:1.1122em" width="9.539"/> is written as <code>2^222 - 117</code>. This suggests a prime number used as the field modulus. However, a common pitfall
+in Python is that <code>^</code> denotes bitwise XOR, not exponentiation. Therefore,
+the value of <img alt="𝑝" class="pdf-inline-math" height="15.500" src="formula-04-05.svg" style="width:0.6673em;height:1.1071em" width="9.342"/> as written in the code is not as large as expected. Instead
+of being around <img alt="2222" class="pdf-inline-math" height="17.500" src="formula-04-06.svg" style="width:1.6786em;height:1.2500em" width="23.500"/>, it becomes a much smaller number, making discrete
+logarithm attacks feasible.</p>
+<p><strong>3. Point Lifting and Masking:</strong> For each byte of the flag, the script attempts to “lift” the byte into an elliptic curve point using <code>E.lift_x()</code>. After
+that,  the  point  is  multiplied  by <img alt="𝑟" class="pdf-inline-math" height="15.500" src="formula-04-07.svg" style="width:0.5480em;height:1.1071em" width="7.672"/>  and  the <img alt="𝑥" class="pdf-inline-math" height="15.500" src="formula-04-08.svg" style="width:0.6867em;height:1.1071em" width="9.614"/>  coordinate  is  masked  using
+<code>0x1fffffffffffff</code>. The process is repeated until the byte can successfully
+be lifted.</p>
+<h2 id="section-4">How to solve</h2>
+<h3 id="section-5">Recovering <img alt="𝑟" class="pdf-inline-math" height="18.167" src="formula-05-01.svg" style="width:0.6343em;height:1.2976em" width="8.880"/></h3>
+<p>To solve this challenge, we need to reverse the process:</p>
+<p><strong>1.</strong> The first step is to retrieve the random scalar <img alt="𝑟" class="pdf-inline-math" height="15.500" src="formula-05-02.svg" style="width:0.5357em;height:1.1071em" width="7.500"/>. Since we know that the
+order of the curve is prime and every element is invertible, we can compute
+the inverse of <img alt="𝑟" class="pdf-inline-math" height="15.500" src="formula-05-03.svg" style="width:0.5357em;height:1.1071em" width="7.500"/> if we can determine it.</p>
+<p><strong>2.</strong> We also know a part of the flag structure, such as that it begins with
+<code>"3C{"</code>. This information helps us guess one of the bytes and use it to compute <img alt="𝑟" class="pdf-inline-math" height="15.500" src="formula-05-04.svg" style="width:0.5385em;height:1.1071em" width="7.540"/>. Specifically, by lifting the known byte and comparing the result to
+the output from the script, we can perform a discrete logarithm to recover
+<img alt="𝑟" class="pdf-inline-math" height="15.500" src="formula-05-05.svg" style="width:0.5505em;height:1.1071em" width="7.707"/>.</p>
+<p><strong>3.</strong> Once we have <img alt="𝑟" class="pdf-inline-math" height="15.500" src="formula-05-06.svg" style="width:0.5383em;height:1.1071em" width="7.536"/>, we can reverse the point multiplication and retrieve the
+original flag bytes.</p>
+<h3 id="section-6">Solve script</h3>
+<pre data-language="python"><code>from sage.all import *
+from Crypto.Util.number import long_to_bytes, inverse, bytes_to_long
+from random import randrange
+
+p = 2^222 - 117  
+F = FiniteField(p)
+E = EllipticCurve(F, [0, 1, 0, 1, 3]) 
+
+assert E.order().is_prime()
+
+outputs = open("output.txt", "r").readlines()
+ciphered = [int(x.split(": ")[1]) for x in outputs]
+added = [int(a.split(": ")[0]) for a in outputs]
+
+mask = 0x1fffffffffffff
+
+# # Perform discrete log to recover r using known part of the flag 
+xP = bytes_to_long(b"3") + added[0]
+unmasked_x = F(ciphered[0]^mask)
+unmasked_Q = E.lift_x(unmasked_x)
+r2 = discrete_log(unmasked_Q, E.lift_x(F(xP)), operation="+")
+
+# Brute-force method to recover r and reconstruct the flag
+for r in range(1, p):
+    flag = b""
+    try:   
+        for i, x in enumerate(ciphered):
+            unmasked_x = F(x^mask)
+            unmasked_Q = E.lift_x(unmasked_x)
+            r_inv = inverse(r, E.order())
+            P = F(r_inv) * unmasked_Q
+            x_value = F(P[0]) if F(P[0]) &gt; 40 else int(P[0]) + p
+            flag += long_to_bytes(int(x_value) - int(F(added[i])))
+        if b"}" in flag:
+            # Verify that both methods give the same result
+            assert r == r2
+            print(flag)
+            exit()
+    except ZeroDivisionError:
+        continue</code></pre>
+<h3 id="section-7">Explanation</h3>
+<p><strong>Discrete Logarithm Attack:</strong> We leverage the fact that the modulus <code>p</code> is
+smaller than expected due to the XOR mistake. This allows us to compute
+the discrete logarithm and recover <img alt="𝑟" class="pdf-inline-math" height="15.500" src="formula-07-01.svg" style="width:0.5357em;height:1.1071em" width="7.500"/> more easily than intended.</p>
+<p><strong>Brute-forcing</strong> <img alt="𝑟" class="pdf-inline-math" height="15.500" src="formula-07-02.svg" style="width:0.5376em;height:1.1071em" width="7.526"/>: As an alternative method, we brute-force <img alt="𝑟" class="pdf-inline-math" height="15.500" src="formula-07-03.svg" style="width:0.5357em;height:1.1071em" width="7.500"/> by iterating
+over possible values and reversing the point multiplication to recover the
+original bytes.</p>
+<p><strong>Finding x-coordinate:</strong>
+Let <img alt="𝑃" class="pdf-inline-math" height="15.500" src="formula-07-04.svg" style="width:0.8365em;height:1.1071em" width="11.711"/> be the original elliptic curve point, and let <img alt="𝑟" class="pdf-inline-math" height="15.500" src="formula-07-05.svg" style="width:0.5357em;height:1.1071em" width="7.500"/> be a random scalar used
+to compute <img alt="𝑄" class="pdf-inline-math" height="15.647" src="formula-07-06.svg" style="width:0.9167em;height:1.1176em" width="12.833"/>:<img alt="𝑄 = 𝑟.𝑃" class="pdf-inline-math" height="15.618" src="formula-07-07.svg" style="width:3.7070em;height:1.1155em" width="51.898"/></p>
+<p>Given <img alt="𝑄" class="pdf-inline-math" height="15.500" src="formula-07-08.svg" style="width:0.9167em;height:1.1071em" width="12.833"/>, our goal is to recover <img alt="𝑃" class="pdf-inline-math" height="15.500" src="formula-07-09.svg" style="width:0.8278em;height:1.1071em" width="11.589"/>. Since the challenge guarantees that the
+order of the elliptic curve is prime, the scalar <img alt="𝑟" class="pdf-inline-math" height="15.500" src="formula-07-10.svg" style="width:0.5544em;height:1.1071em" width="7.761"/> is invertible. Thus, we can
+find <img alt="𝑟-1" class="pdf-inline-math" height="17.500" src="formula-07-11.svg" style="width:1.1548em;height:1.2500em" width="16.167"/> (the inverse of <img alt="𝑟" class="pdf-inline-math" height="15.500" src="formula-07-12.svg" style="width:0.5385em;height:1.1071em" width="7.539"/>) such that <img alt="𝑟.𝑟-1= 1" class="pdf-inline-math" height="17.500" src="formula-07-13.svg" style="width:3.8214em;height:1.2500em" width="53.500"/>.</p>
+<div class="math-block pdf-math"><span class="inline-math-scroll" tabindex="0"><img alt="𝑄 = 𝑟.𝑃 ⇔ 𝑟-1.𝑄 = 𝑟-1.(𝑟.𝑃 ) ⇔ 𝑟-1.𝑟.𝑃 = 𝑃" class="pdf-display-math" height="17.730" src="formula-07-14.svg" style="width:19.0246em;height:1.2664em" width="266.345"/></span></div>
+<p>Thus, we recover the original point <img alt="𝑃" class="pdf-inline-math" height="15.500" src="formula-07-15.svg" style="width:0.8349em;height:1.1071em" width="11.689"/>:</p>
+<div class="math-block pdf-math"><img alt="𝑃 = 𝑟-1.𝑄" class="pdf-display-math" height="17.500" src="formula-07-16.svg" style="width:4.3929em;height:1.2500em" width="61.500"/></div>
+<p>Since the point <img alt="𝑃" class="pdf-inline-math" height="15.500" src="formula-07-17.svg" style="width:0.8249em;height:1.1071em" width="11.548"/> is now recovered, we can easily access its <img alt="𝑥" class="pdf-inline-math" height="15.500" src="formula-07-18.svg" style="width:0.6786em;height:1.1071em" width="9.500"/>-coordinate
+(denoted <img alt="𝑥𝑃" class="pdf-inline-math" height="18.167" src="formula-07-19.svg" style="width:1.2406em;height:1.2976em" width="17.369"/>) by extracting the first component of <img alt="𝑃" class="pdf-inline-math" height="15.500" src="formula-07-20.svg" style="width:0.8203em;height:1.1071em" width="11.484"/>
+<strong>Note:</strong> The line <code>x_value = [...]</code> checks whether the <img alt="𝑥" class="pdf-inline-math" height="12.833" src="formula-07-21.svg" style="width:0.5833em;height:0.9167em" width="8.167"/>-coordinate of point <img alt="𝑃" class="pdf-inline-math" height="12.833" src="formula-07-22.svg" style="width:0.6775em;height:0.9167em" width="9.484"/>, <img alt="𝑃 [0]" class="pdf-inline-math" height="12.947" src="formula-07-23.svg" style="width:1.5833em;height:0.9248em" width="22.167"/>, is greater
+than 40. If it is, the value is directly interpreted as the ASCII code. If it’s less than 40, it
+means the value was wrapped around due to the modulo <img alt="𝑝" class="pdf-inline-math" height="12.833" src="formula-07-24.svg" style="width:0.5260em;height:0.9167em" width="7.365"/> (since <img alt="𝑝 = 107" class="pdf-inline-math" height="12.833" src="formula-07-25.svg" style="width:2.8259em;height:0.9167em" width="39.563"/> and ASCII characters like “<code>{</code>“ are larger than 107). In this case, <img alt="𝑝" class="pdf-inline-math" height="12.833" src="formula-07-26.svg" style="width:0.5246em;height:0.9167em" width="7.344"/> is added to reverse the wrap and recover the
+correct value.</p>
+<p><strong>Final Check:</strong> Once we recover the flag, we assert that the two methods
+(discrete logarithm and brute-force) yield the same <img alt="𝑟" class="pdf-inline-math" height="15.500" src="formula-07-27.svg" style="width:0.5524em;height:1.1071em" width="7.734"/>.</p>
+<h2 id="section-8">Conclusion</h2>
+<p>This challenge highlights the importance of correctly defining prime fields
+in cryptographic algorithms and demonstrates how small mistakes, such as
+the use of bitwise XOR instead of exponentiation, can lead to vulnerabilities like breaking the discrete logarithm problem.</p>

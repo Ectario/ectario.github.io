@@ -1,0 +1,1 @@
+(()=>{const t=document.documentElement;let e;try{e=localStorage.getItem("ectario-theme")}catch{}const n=e==="dark"||e!=="light"&&window.matchMedia("(prefers-color-scheme: dark)").matches;t.dataset.theme=n?"dark":"light",t.classList.add("js")})()

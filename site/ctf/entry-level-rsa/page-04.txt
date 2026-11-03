@@ -1,0 +1,31 @@
+                                                                 2024-09-18
+
+2 Analyse
+
+2.1 Key Points
+
+1. Ciphertext Length: The ciphertext ct is signiﬁcantly smaller than
+expected—about 2351 bits, while the modulus 𝑛 is around 4096 bits. This
+diﬀerence in size suggests something important: the value of FLAG11 is
+smaller than 𝑛, meaning the encryption did not “wrap around” modulo 𝑛.
+
+
+2. Unlikely Probability: If FLAG11 mod 𝑛 were truly wrapped, the high
+bits of the ciphertext would not be zero. The fact that the ciphertext is only
+2351 bits implies that the most signiﬁcant 1745 bits of the result are zero,
+which is extremely improbable in a random RSA scenario. The probability
+                                                                   1745
+of this occurring, assuming uniform distribution, is roughly ( 12 ) , which
+is virtually impossible. This strongly suggests that FLAG11 < 𝑛, meaning
+that the encryption did not involve modular reduction.
+
+
+3. Direct Root Extraction: Since FLAG11 < 𝑛, the ciphertext is simply
+FLAG11 , and no modular arithmetic has aﬀected the result. This allows us
+to directly compute the 11th root of the ciphertext to recover the ﬂag.
+
+
+
+
+                                                                     Ectario
+                                    4/8

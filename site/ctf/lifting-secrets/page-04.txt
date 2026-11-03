@@ -1,0 +1,32 @@
+                                                                  2024-09-18
+
+2 Analyse
+
+2.1 Key Points
+
+1. Elliptic Curve: The curve used is deﬁned by the equation 𝑦2 = 𝑥3 +
+𝑥2 + 𝑥 + 3. The challenge gives the assurance that the curve’s order is a
+prime number (assert E.order().is_prime()), which implies that all non-
+zero elements of the group are invertible. This property will be crucial when
+trying to undo the multiplication by 𝑟.
+
+
+2. Prime Field used: The value of 𝑝 is written as 2^222 - 117. This sug-
+gests a prime number used as the ﬁeld modulus. However, a common pitfall
+in Python is that ^ denotes bitwise XOR, not exponentiation. Therefore,
+the value of 𝑝 as written in the code is not as large as expected. Instead
+of being around 2222 , it becomes a much smaller number, making discrete
+logarithm attacks feasible.
+
+
+3. Point Lifting and Masking: For each byte of the ﬂag, the script at-
+tempts to “lift” the byte into an elliptic curve point using E.lift_x(). After
+that, the point is multiplied by 𝑟 and the 𝑥 coordinate is masked using
+0x1fffffffffffff. The process is repeated until the byte can successfully
+be lifted.
+
+
+
+
+                                                                     Ectario
+                                    4/8

@@ -1,0 +1,118 @@
+
+<p>In mid-November, I participated in the <strong>GreHack</strong> <strong>CTF</strong> with my team (<strong>Phreaks 2600</strong>), and the challenge I will present was one of the problems featured in the competition. Interestingly, only two other teams managed to solve it, this makes it a particularly intriguing challenge, categorized under “<strong>reverse</strong>“.</p><ul><li><strong>Category:</strong> Reverse</li><li><strong>Solves:</strong> 3</li><li><strong>Info provided:</strong> 1 binary file (ELF 64-bit LSB executable dynamically linked and stripped)</li><li><strong>Flag:</strong> <strong><code>GH{Y0u_m4d3_L4gR4nG3_L4u6h_H4rD}</code></strong></li></ul> 
+<h2 id="section-1">Reversing</h2> 
+									The <code>main</code> function implements a password-checking mechanism with a mathematical twist.
+
+When executed, the program first prints a welcoming message introducing the challenge, followed by prompts to input three coefficients: <code>a[0]</code>, <code>a[1]</code>, and <code>a[2]</code>. These coefficients are stored in specific memory locations and are critical for validating the password.
+<p>After this setup, the program expects the user to supply a password as a command-line argument. If no password is provided, it informs the user of the correct usage and exits. However, if a password is supplied, the program processes it character by character.</p>
+<p>For each character in the password, the program uses a custom function, <b>FUN_00400706</b>, to compute a reference value. This function takes the character’s position (or index) as an input and calculates a value based on a series of iterations involving the coefficients provided earlier.</p> 
+<img alt="" height="861" loading="lazy" src="image-01.png" width="720"/> 
+<img alt="" height="852" loading="lazy" src="image-02.png" width="738"/> 
+<p>The program compares each character of the password with the computed reference value. If they match, a counter is incremented. Once all characters are processed, the program checks two conditions to determine if the password is valid: the number of matches must equal the number of characters processed, and the password must have exactly 33 characters. If these conditions are satisfied, a success message is displayed. Otherwise, it informs the user that the password is invalid.</p><p> </p> 
+<p>The function <strong><span data-token-index="1" spellcheck="false">FUN_00400706</span></strong> is central to this process. It calculates reference values by iterating 33 times and combining the coefficients with the input index. The result depends heavily on the coefficients, but only the first three are user-defined during execution. The remaining coefficients are already embedded in the program (starting from <strong>0x00401aec</strong>).</p> 
+<img alt="" height="684" loading="lazy" src="image-03.png" width="1024"/> 
+<img alt="" height="316" loading="lazy" src="image-04.png" width="427"/> 
+<p>So, the challenge revolves around recovering the first three coefficients (<strong><span data-token-index="1" spellcheck="false">a[0]</span>, <span data-token-index="3" spellcheck="false">a[1]</span>, and <span data-token-index="5" spellcheck="false">a[2]</span></strong>) because the remaining coefficients are already known. Once these three coefficients are correctly identified, they can be input into the program, and the function <strong><span data-token-index="7" spellcheck="false">FUN_00400706</span></strong> can be executed to compute the reference values for each index from 0 to 32. By combining these values, the entire password can be reconstructed character by character. The task is therefore to deduce the initial coefficients, input them, and then use the program logic to retrieve the correct password.</p> 
+<h2 id="section-2">Let’s rewrite the FUN_00400706 in python and translate the problem into a more mathematical form</h2> 
+<p>The function <strong><span data-token-index="1" spellcheck="false">FUN_00400706</span></strong> can be described as a polynomial evaluation function operating within a finite field. Mathematically, it computes:</p> 
+<img alt="" height="192" loading="lazy" src="image-05.png" width="718"/> 
+<p>where:</p><ul><li><code>i</code> (or <code>param_1</code> in the decompiled code) is the input to the function,</li><li><code>a_k</code> are the coefficients stored in the array <code>INT_00401ae0</code>,</li><li><code>2^31 - 1 = 0x7FFFFFFF</code> is the modulus defining the finite field.</li></ul><p>This is the python (with <code>sagemath</code>) re-implementation:</p> <pre data-language="python"><code>p = 0x7FFFFFFF
+F = FiniteField(p)
+
+def eval_at(i, coeffs):
+    s = 0
+    for power, c in enumerate(coeffs):
+        s += (i**power)*c
+    return int(F(s))</code></pre>
+<p>Therefore, let’s rewrite P(i) in a splitted form to separate it into two distinct sums: one for the first three coefficients (unknown) and another for the rest (known).</p> 
+<img alt="" height="192" loading="lazy" src="image-06.png" width="718"/> 
+<p>We can split the sum into two parts:</p> 
+<img alt="" height="220" loading="lazy" src="image-07.png" width="966"/> 
+<p>Here:</p><ul><li>The first sum involves the coefficients <code>a_0, a_1</code> and <code>a_2</code> which are unknown.</li><li>The second sum involves the remaining coefficients, which are known because they are hardcoded in the program.</li></ul><p>In practice:</p><ul><li>We denote the <strong>unknown part</strong> as </li></ul> 
+<img alt="" height="130" loading="lazy" src="image-08.png" width="640"/> 
+<p>And the <span data-token-index="1">known part</span> as .</p> 
+<img alt="" height="130" loading="lazy" src="image-09.png" width="640"/> 
+<p>Thus, <span data-token-index="1" spellcheck="false">P(i)</span> can be written as:</p> 
+<img alt="" height="130" loading="lazy" src="image-10.png" width="640"/> 
+<p>In this form, the problem becomes clear: we know <span data-token-index="1" spellcheck="false">K(i)</span> because the coefficients <span data-token-index="3" spellcheck="false">a_3</span> to <span data-token-index="5" spellcheck="false">a_32</span> are available, but we must deduce <span data-token-index="7" spellcheck="false">U(i)</span> (and hence <span data-token-index="9" spellcheck="false">a_0, a_1, a_2</span>) to reconstruct the full password.</p> 
+<h2 id="section-3">Exploitation time</h2> 
+<p>Before proceeding with the exploitation, it’s important to recall a key detail: the format of the flag. We know that the flag starts with <code>GH{</code>, and based on the decompiled code with the <code>puts</code> function, the password we are tasked to find corresponds directly to this flag. This knowledge is crucial because it gives us the starting values of the password’s first three characters, which we can leverage to deduce the unknown coefficients.</p><p>The function <code>get_known_value</code> , calculates the <strong>known part</strong> (ie. <code>K(i)</code>), based on the higher-order coefficients (from <code>a_3 </code>to <code>a_32</code>).</p> <pre data-language="python"><code>def get_known_value(i, coeffs):
+    s = 0
+    power = 3
+    for _, c in enumerate(coeffs):
+        s += (i**power)*c
+        power += 1
+    return F(s)</code></pre>
+<p>Using this, we construct a system of equations based on the known first three characters of the flag. Each character’s ASCII value provides a corresponding <code>P(i)</code> for <code>i = 0, 1, 2</code> . <code>Y</code> will represents an array containing the ASCII values of the first three characters of the flag (<code>'G'</code>, <code>'H'</code>, <code>'{'</code>), converted to elements in our finite field <code>F</code>.</p><p><em>(Note: Remember that the <code>i</code> values correspond to the index of the character in the password)</em>.</p> 
+<img alt="" height="767" loading="lazy" src="image-11.png" width="1024"/> 
+<p>Finally, we obtain a system of linear equations in <code>F</code>:</p><ol><li>From <code>P(0)</code>: We directly get <code>a₀</code></li><li>From <code>P(1)</code>: We get <code>a₀ + a₁ + a₂</code></li><li>From <code>P(2)</code>: We get <code>a₀ + 2a₁ + 4a₂</code></li></ol><p>Python code:</p> <pre data-language="python"><code>Y = [F(ord("G")), F(ord("H")), F(ord("{"))]
+
+a0 = Y[0] - get_known_value(0, coeffs)
+a0_plus_a1_plus_a2 = F(Y[1] - get_known_value(1, coeffs))
+a0_plus_2_a1_plus_4_a2 = F(Y[2] - get_known_value(2, coeffs) )</code></pre>
+<p>Therefore, solving this system reveals our unknown coefficients <code>(a₀, a₁, a₂)</code>, allowing us to fully reconstruct <code>P(i)</code> and ultimately recover the complete flag.</p><p>Let’s express our system of equations in matrix form:</p> 
+<img alt="" height="90" loading="lazy" src="image-12.png" width="250"/> 
+<p>Where:</p><ul><li><code>A</code> is our coefficient matrix based on character positions</li><li><code>x = [a0, a1, a2]ᵀ</code> contains our unknown coefficients</li><li><code>B</code> holds our previously calculated values</li></ul><p>The system is represented by these matrices:</p> 
+<img alt="" height="464" loading="lazy" src="image-13.png" width="500"/> 
+<p>To find our unknowns, we can solve:</p> 
+<img alt="" height="100" loading="lazy" src="image-14.png" width="330"/> 
+<p>(<code>A</code> is invertible over the finite field <code>F</code>)</p><p>Note: with <code>sagemath</code> you can directly use <code>solve_right</code> to get <code>x</code> (<a href="https://doc.sagemath.org/html/en/reference/matrices/sage/matrix/matrix2.html#sage.matrix.matrix2.Matrix.solve_right" rel="noopener" target="_blank">link</a>)</p> 
+<h2 id="section-4">Final Exploit</h2> <pre data-language="python"><code>from sage.all import *
+
+p = 0x7FFFFFFF
+F = FiniteField(p)
+
+coeffs = [ 0x4df125f9,
+    0x287d857f, 0x4c95eeda, 0x34ccabc4, 0x57c8eb71,
+    0x14ea06b2, 0x2f1548a8, 0x0726b2a5, 0x03bcc6dc,
+    0x2b2db70a, 0x35586ad0, 0x034630e5, 0x6cd02785,
+    0x1af8bbef, 0x511622ce, 0x04278620, 0x5ab7041e,
+    0x23e0396f, 0x3d60c00d, 0x2c4ad7a3, 0x0bd8c6db,
+    0x67ef8970, 0x31328955, 0x41407fa9, 0x7702b717,
+    0x73a17921, 0x05321672, 0x26e9a468, 0x3f0278e9,
+    0x074706c4
+]
+
+coeffs = list(map(F, coeffs))
+
+def get_known_value(i, coeffs):
+    s = 0
+    power = 3
+    for _, c in enumerate(coeffs):
+        s += (i**power)*c
+        power += 1
+    return F(s)
+
+Y = [F(ord("G")), F(ord("H")), F(ord("{"))]
+
+assert sum(coeffs) % p == get_known_value(1, coeffs)
+ 
+a0 = Y[0] - get_known_value(0, coeffs)
+a0_plus_a1_plus_a2 = F(Y[1] - get_known_value(1, coeffs))
+a0_plus_2_a1_plus_4_a2 = F(Y[2] - get_known_value(2, coeffs) )
+
+
+A = Matrix(F, [ [1, 0**1, 0**2],
+                [1, 1**1, 1**2], 
+                [1, 2**1, 2**2]])
+
+B = vector(F, [a0, a0_plus_a1_plus_a2, a0_plus_2_a1_plus_4_a2])
+
+assert A.is_invertible()
+
+solution = A**-1 * B # or solution = A.solve_right(B)
+coeffs = list(map(int, solution)) + coeffs
+
+def eval_at(i, coeffs):
+    s = 0
+    for power, c in enumerate(coeffs):
+        s += (i**power)*c
+    return int(F(s))
+
+r = []
+for i in range(33):
+    r.append(chr(eval_at(i, coeffs)))
+
+print(solution)
+print("".join(r))</code></pre>
+<img alt="" height="57" loading="lazy" src="image-15.png" width="734"/> 

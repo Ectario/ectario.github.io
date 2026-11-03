@@ -1,0 +1,49 @@
+                                                         2024-09-18
+
+3.2 Solve script
+
+from Crypto.Util.number import *
+
+p = 2^222 - 117
+F1 = FiniteField(p)
+E1 = EllipticCurve(F1, [0, 1, 0, 1, 3])
+q = 2^221 - 3
+F2 = FiniteField(q)
+E2 = EllipticCurve(F2, [0, 1, 0, 1, 3])
+r = 2^224 - 2^96 + 1
+F3 = FiniteField(r)
+E3 = EllipticCurve(F3, [0, 1, 0, 1, 3])
+
+s_xor_flag, F1_s, F2_s, F3_s, yR = None, None, None, None, None
+
+with open("output.txt", 'r') as file:
+    for line in file:
+        line = line.strip()
+        if line.startswith("s XOR flag="):
+            s_xor_flag = int(line.split("=")[1])
+        elif line.startswith("F1(s)="):
+            F1_s = int(line.split("=")[1])
+        elif line.startswith("F2(s)="):
+            F2_s = int(line.split("=")[1])
+        elif line.startswith("F3(s)="):
+            F3_s = int(line.split("=")[1])
+        elif line.startswith("R[_sage_const_1 ]="):
+            yR = int(line.split("=")[1])
+
+polR = E3.defining_polynomial()
+xRs                                                              =
+polR(y=yR,z=1).univariate_polynomial().roots(multiplicities=False)
+
+for x in xRs:
+    s = int(CRT([F1_s, F2_s, F3_s], [p, q ,r]))
+    s += int(x)
+    flag = long_to_bytes(s_xor_flag ^^ int(s))
+    print(flag) if b"}" in flag else ...
+
+                     ——————————-
+
+
+
+
+                                                            Ectario
+                               6/8

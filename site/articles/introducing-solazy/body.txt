@@ -1,0 +1,518 @@
+
+<p>This post dives into <b>s</b><strong>ol-azy</strong>, our new all-in-one toolkit for security research. Helping in reversing, analyzing, and poking at Solana programs statically, surgically, and on your terms. You can clone it from our GitHub <a href="https://github.com/FuzzingLabs/sol-azy" rel="noopener" target="_blank">https://github.com/FuzzingLabs/sol-azy</a></p> 
+<h2 id="section-1">What Problem Does sol-azy Solve?<!-- notionvc: 601600e9-875f-4232-ac24-beb0220e52a5 --></h2> 
+<p>Solana’s programs ecosystem presents unique challenges for developers and security auditors. Unlike Ethereum’s well-documented EVM, Solana programs compile to a custom BPF (Berkeley Packet Filter) bytecode format that can be hard to inspect. Many on-chain Solana programs are closed-source, making it difficult to verify their behavior or security without heavy reverse engineering. Historically, analyzing a Solana program meant juggling multiple tools, one for static code analysis, another for disassembling BPF binaries, plus manual steps to fetch program code from the blockchain. This fragmented workflow is time-consuming.</p> 
+<p><strong>sol-azy is designed to solve these pain points.</strong> It’s a CLI-based, modular toolkit that combines static analysis (SAST) with reverse engineering capabilities in one unified tool. With sol-azy, Solana developers and security researchers can seamlessly <strong>scan source code for vulnerabilities</strong>, <strong>disassemble on-chain binaries</strong>, and even <strong>retrieve deployed program bytecode / Account Data</strong>, all using a consistent command-line interface.</p><p><!-- notionvc: 0046b018-fd35-4d51-babd-11234763dbea --></p><p>In the rest of this post, we’ll introduce sol-azy’s key features and modules, demonstrate how to use the CLI for a typical analysis workflow, and discuss how the tool can be extended or integrated into your development pipeline. If you’re a Solana developer, programs auditor, or security researcher, read on to see how sol-azy can elevate your analysis workflow.</p> 
+<img alt="" height="756" loading="lazy" src="image-01.png" width="500"/> 
+<h2 id="section-2">Overview of Capabilities<!-- notionvc: 1b3f2c7b-b8c5-4f7d-9c99-d1df2881f8af --></h2> 
+<p><b>sol-azy</b> is composed of several modules that together provide a comprehensive analysis suite for Solana programs. At a high level, its capabilities include:</p><ul><li><strong>Static Analysis Engine (SAST)</strong>, Scans Solana program source code (e.g. Rust) for vulnerabilities and code patterns using custom rules. It uses an AST-based approach for accurate pattern matching and supports user-defined security rules via Starlark scripts. For the moment the sast is only based on syn-ast but we plan to implement other input format like MIR.</li><li><strong>Reverse Engineering Engine</strong>, Disassembles Solana’s BPF bytecode into human-readable assembly and constructs the program’s control flow graph (CFG). It can output graphs in Graphviz <code>.dot</code> format and decodes read-only data (rodata) embedded in the binary for easier interpretation and thus with mapping the used addresses with their data.</li><li><strong>Build Support</strong>, Provides convenient build integration for Solana programs which can compile Solana programs from source (using the Solana SDK or Anchor framework), producing the BPF bytecode and associated metadata. <i>(still in WIP)</i></li><li><strong>Dotting (CFG Editing)</strong>, Allows interactive editing  of the control flow graph. Advanced users can modify the <code>.dot</code> graph of a program’s CFG which allows them to filter only the clusters they are interested in within the CFG (instead of having gazillions of clusters, some of which are not useful).</li><li><strong>Fetcher Module</strong>, Retrieves on-chain program bytecode by program ID. Also, given a Solana program’s public key, sol-azy fetches the account no matter what, even if the provided program ID is not executable <i>(unlike the Solana toolchain, which requires using a different command depending on whether the program is executable or not)</i>. That’s helping for audits of closed-source programs or verification of deployed versions.</li></ul><p><!-- notionvc: 6e5493a3-d4f5-4e42-bfc8-0d0a1ff6e547 --></p><p>Each of these capabilities is accessible through a straightforward CLI interface. Next, we’ll dive deeper into the two core components, the static analysis engine and the reverse engineering engine, which form the heart of sol-azy.</p> 
+<h2 id="section-3"><span>The SAST Engine: How Rules Work, Templates, and Examples</span><!-- notionvc: 7a033332-22c2-4bab-86df-2d8d0466e92e --></h2> 
+<p>The static analysis feature is heavily inspired by <a href="https://github.com/Auditware/radar" rel="noopener" target="_blank">radar</a>. We really liked the approach of using Python to write rules on an enhanced <code>syn</code> ast structure. But instead of using a Python interpreter we choose to try <code>starlark-rs</code> a Starlark VM, you can read the language specifications <a href="https://starlark-lang.org/spec.html" rel="noopener" target="_blank">here</a>. Since we can add new features to the Starlark VM, at the current time the configuration is the following:</p> <pre data-filename="starlark_engine.rs" data-language="rust"><code>...
+    pub fn new() -&gt; Self {
+        Self {
+            dialect: Dialect {
+                enable_types: DialectTypes::Enable,
+                enable_f_strings: true,
+                ..Dialect::Standard
+            },
+            // ? https://github.com/facebook/starlark-rust/blob/main/starlark/src/stdlib.rs#L131
+            globals: GlobalsBuilder::extended_by(&amp;[
+                LibraryExtension::Json,       // ? To communicate with the Rust parts easily
+                LibraryExtension::Map, // ? For `map(lambda x: x * 2, [1, 2, 3, 4]) == [2, 4, 6, 8]`
+                LibraryExtension::Filter, // ? For `filter(lambda x: x &gt; 2, [1, 2, 3, 4]) == [3, 4]`
+                LibraryExtension::Typing, // ? Type annotation and strict type checking
+                LibraryExtension::StructType, // ? For export in a pythonic way
+                LibraryExtension::Print, // ? Access to `print`
+                LibraryExtension::SetType, // ? Access to `set`
+            ])
+            .build(),
+        }
+    }
+...
+</code></pre>
+<p>A syn ast node have the following attributes:</p> <pre data-language="python"><code>EMPTY_ACCESS_PATH = "EMPTY_ACCESS_PATH"
+EMPTY_IDENT = "EMPTY_IDENT"
+EMPTY_METADATA = {}
+EMPTY_NODE = {
+    "raw_node": {},
+    "access_path": EMPTY_ACCESS_PATH,
+    "metadata": EMPTY_METADATA,
+    "children": [],
+    "parent": {},
+    "root": False,
+    "args": []
+}</code></pre>
+<p>For example here’s a basic node object:</p> <pre data-filename="ast.json" data-language="json"><code>{
+      "access_path": "[12].struct.fields.named[0]",
+      "args": [],
+      "children": [
+        {
+          "access_path": "[12].struct.fields.named[0].attrs[0].meta.list.path.segments[0]",
+          "args": [],
+          "children": [],
+          "ident": "clap",
+          "metadata": {
+            "position": {
+              "end_column": 14,
+              "end_line": 122,
+              "source_file": "./src/main.rs",
+              "start_column": 10,
+              "start_line": 122
+            }
+          },
+          "parent": {
+            "access_path": "EMPTY_ACCESS_PATH",
+            "args": [],
+            "children": [],
+            "metadata": {},
+            "parent": {},
+            "raw_node": {},
+            "root": false
+          },
+          "raw_node": {
+            "ident": "clap",
+            "position": {
+              "end_column": 14,
+              "end_line": 122,
+              "source_file": "./src/main.rs",
+              "start_column": 10,
+              "start_line": 122
+            }
+          },
+          "root": false
+        },
+	      ...  
+      ],
+      "ident": "command",
+      "metadata": {
+        "position": {
+          "end_column": 11,
+          "end_line": 26,
+          "source_file": "./src/main.rs",
+          "start_column": 4,
+          "start_line": 26
+        }
+      },
+      "parent": {
+        "access_path": "EMPTY_ACCESS_PATH",
+        "args": [],
+        "children": [],
+        "metadata": {},
+        "parent": {},
+        "raw_node": {},
+        "root": false
+      },
+      "raw_node": {
+	        ...
+        }
+      },
+      "root": false
+    }</code></pre>
+<p>This allow you to write rule like this:</p> <pre data-filename="syn_ast.star" data-language="python"><code>RULE_METADATA = {
+    "version": "0.1.0",
+    "author": "MohaFuzzingLabs",
+    "name": "Saturating math operation usage",
+    "severity": "Low",
+    "certainty": "Low",
+    "description": "The use of operations like saturating_add, saturating_mul, or saturating_sub in Rust is generally intended to prevent integer overflow and underflow, ensuring that the result remains within the valid range for the data type. However, in certain cases, relying on these functions alone can lead to inaccurate or unexpected results. This occurs when the application logic assumes that saturation alone guarantees accurate results, but ignores the potential loss of precision or accuracy."
+}
+
+SATURATING_FUNCTIONS = ["saturating_add", "saturating_mul", "saturating_sub", "saturating_add_signed", "saturating_sub_signed"]
+
+def syn_ast_rule(root: dict) -&gt; list[dict]:
+    matches = []
+
+    def saturating_collector(node: dict):
+        if node.get("ident", "") in SATURATING_FUNCTIONS:
+            matches.append(syn_ast.to_result(node))
+
+    list(map(saturating_collector, syn_ast.flatten_tree(root)))
+    return matches</code></pre>
+<p><span>For details about the available functions you can read the documentation.</span></p> 
+<h2 id="section-4">The Reverse Engine: Disassembly, CFG Output, and Rodata Tracking</h2> 
+<p><span>In addition to static source analysis, sol-azy equips you with a reverse engineering engine for when you need to dig into compiled binaries. The reverse engineering module is based on the work of Anza, with additional modifications and enhancements specifically tailored for security researchers.</span></p> 
+<img alt="" height="609" loading="lazy" src="image-02.png" width="500"/> 
+<h3 id="section-5"><span><u>sol-azy’s reverse engineering module includes several powerful features:</u></span></h3> 
+<p><span><b><i>Disassembly to BPF Assembly</i></b></span></p> 
+<p><span>Given a compiled Solana program (an ELF containing BPF bytecode), sol-azy can produce a full disassembly. It translates the raw bytecode into human-readable BPF assembly instructions,  while also annotating the Rust equivalents of BPF instructions and performing dynamic string resolution.</span></p>
+<p><span><u>Let’s use this code as an example:</u></span></p> <pre data-filename="lib.rs" data-language="rust"><code>use solana_program::{
+    account_info::AccountInfo,
+    entrypoint,
+    entrypoint::ProgramResult,
+    pubkey::Pubkey,
+    msg,
+};
+
+entrypoint!(process_instruction);
+
+fn win() -&gt; u64 {
+    msg!("You win!");
+    987654321
+}
+
+fn loose() -&gt; u64 {
+    msg!("You lose!");
+    123456789
+}
+
+pub fn process_instruction(
+    _program_id: &amp;Pubkey,
+    _accounts: &amp;[AccountInfo],
+    instruction_data: &amp;[u8],
+) -&gt; ProgramResult {
+    if instruction_data.len() &lt; 8 {
+        msg!("Not enough data. Need two u32 values.");
+        return Err(solana_program::program_error::ProgramError::InvalidInstructionData);
+    }
+
+    let a = u32::from_le_bytes(instruction_data[0..4].try_into().unwrap());
+    let b = u32::from_le_bytes(instruction_data[4..8].try_into().unwrap());
+
+    msg!("Inputs: {} + {}", a, b);
+
+    let result = if a + b == 1337 {
+        win()
+    } else {
+        loose()
+    };
+
+    msg!("Result: {}", result);
+
+    Ok(())
+}</code></pre>
+<p><span>Here’s what we get when running the reverse module to retrieve the disassembly (from the Bytecode of the code above):</span></p> <pre data-language="asm"><code>entrypoint:
+    mov64 r2, r1                                    r2 = r1
+    mov64 r1, r10                                   r1 = r10
+    add64 r1, -96                                   r1 += -96   ///  r1 = r1.wrapping_add(-96 as i32 as i64 as u64)
+    call function_308                       
+    ldxdw r7, [r10-0x48]                    
+    ldxdw r8, [r10-0x58]                    
+    ldxdw r1, [r10-0x38]                    
+    mov64 r2, 8                                     r2 = 8 as i32 as i64 as u64
+    jgt r2, r1, lbb_91                              if r2 &gt; r1 { pc += 79 }
+    ldxdw r1, [r10-0x40]                    
+    ldxw r2, [r1+0x0]                       
+    stxw [r10-0xa8], r2                     
+    ldxw r1, [r1+0x4]                       
+    stxw [r10-0xa4], r1                     
+    mov64 r1, 0                                     r1 = 0 as i32 as i64 as u64
+    stxdw [r10-0x40], r1                    
+    lddw r1, 0x100004610 --&gt; b"\x00\x00\x00\x00\xd0C\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00…        r1 load str located at 4294985232
+    stxdw [r10-0x60], r1                    
+    mov64 r1, 2                                     r1 = 2 as i32 as i64 as u64
+    stxdw [r10-0x58], r1                    
+    stxdw [r10-0x48], r1                    
+    mov64 r1, r10                                   r1 = r10
+    add64 r1, -136                                  r1 += -136   ///  r1 = r1.wrapping_add(-136 as i32 as i64 as u64)
+    stxdw [r10-0x50], r1                    
+    mov64 r1, r10                                   r1 = r10
+    add64 r1, -164                                  r1 += -164   ///  r1 = r1.wrapping_add(-164 as i32 as i64 as u64)
+    stxdw [r10-0x78], r1                    
+    lddw r1, 0x100004210 --&gt; b"\xbf#\x00\x00\x00\x00\x00\x00a\x11\x00\x00\x00\x00\x00\x00\xb7\x02\x00\x0…        r1 load str located at 4294984208
+    stxdw [r10-0x70], r1                    
+    stxdw [r10-0x80], r1                    
+    mov64 r1, r10                                   r1 = r10
+    add64 r1, -168                                  r1 += -168   ///  r1 = r1.wrapping_add(-168 as i32 as i64 as u64)
+    stxdw [r10-0x88], r1                    
+    mov64 r1, r10                                   r1 = r10
+    add64 r1, -160                                  r1 += -160   ///  r1 = r1.wrapping_add(-160 as i32 as i64 as u64)
+    mov64 r2, r10                                   r2 = r10
+    add64 r2, -96                                   r2 += -96   ///  r2 = r2.wrapping_add(-96 as i32 as i64 as u64)
+    call function_858                       
+    ldxdw r1, [r10-0xa0]                    
+    ldxdw r2, [r10-0x90]                    
+    syscall [invalid]                       
+    ldxw r1, [r10-0xa8]                     
+    ldxw r2, [r10-0xa4]                     
+    add64 r2, r1                                    r2 += r1   ///  r2 = r2.wrapping_add(r1)
+    lsh64 r2, 32                                    r2 &lt;&gt;= 32   ///  r2 = r2.wrapping_shr(32)
+    jne r2, 1337, lbb_58                            if r2 != (1337 as i32 as i64 as u64) { pc += 6 }
+    lddw r1, 0x1000043e0 --&gt; b"You win!"            r1 load str located at 4294984672
+    mov64 r2, 8                                     r2 = 8 as i32 as i64 as u64
+    syscall [invalid]                       
+    mov64 r1, 987654321                             r1 = 987654321 as i32 as i64 as u64
+    ja lbb_63                                       if true { pc += 5 }
+lbb_58:
+    lddw r1, 0x1000043e8 --&gt; b"You lose!"           r1 load str located at 4294984680
+    mov64 r2, 9                                     r2 = 9 as i32 as i64 as u64
+    syscall [invalid]                       
+    mov64 r1, 123456789                             r1 = 123456789 as i32 as i64 as u64
+    
+...SNIP...</code></pre>
+<p><span><b><i>Control Flow Graph (CFG) Generation</i></b></span></p> 
+<p><span>Beyond linear disassembly, sol-azy can reconstruct the program’s control flow graph, a directed graph that shows how execution flows through functions, basic blocks, and branches. The tool can output the CFG in Graphviz </span><code>.dot</code><span> format. This </span><code>.dot</code><span> file can be viewed as a diagram, illustrating nodes (basic blocks or functions) and edges (jumps or calls) that represent all possible execution paths. The CFG view is especially useful for complex programs with many branches, you can identify key decision points and see how different instructions lead to different outcomes. This feature works very well in combination with the dotting module (see “Other Features”) and the disassembly. It’s also worth noting that dynamic string resolution works for the CFG as well.</span></p><p><span data-token-index="0">Still with the same code than above:<br/></span><!-- notionvc: 862ed1dd-800f-49bb-b53a-654fc4b37cca --></p> <pre data-filename="example_cfg.dot" data-language="dot"><code>... SNIP ...
+
+lbb_58 [label=&lt;&lt;table border="0" cellpadding="3"&gt;
+  &lt;tr&gt;&lt;td align="left"&gt;lddw&lt;/td&gt;&lt;td align="left"&gt;r1, 0x1000043e8 --&gt; b"You lose!"&lt;/td&gt;&lt;/tr&gt;
+  &lt;tr&gt;&lt;td align="left"&gt;mov64&lt;/td&gt;&lt;td align="left"&gt;r2, 9&lt;/td&gt;&lt;/tr&gt;
+  &lt;tr&gt;&lt;td align="left"&gt;syscall&lt;/td&gt;&lt;td align="left"&gt;[invalid]&lt;/td&gt;&lt;/tr&gt;
+  &lt;tr&gt;&lt;td align="left"&gt;mov64&lt;/td&gt;&lt;td align="left"&gt;r1, 123456789&lt;/td&gt;&lt;/tr&gt;
+&lt;/table&gt;&gt;];
+
+... SNIP ...</code></pre>
+<img alt="" height="513" loading="lazy" src="image-03.png" width="1024"/> 
+<img alt="" height="351" loading="lazy" src="image-04.png" width="773"/> 
+<p><span data-token-index="0">Also, the CFG module includes </span><span data-token-index="1">–reduced</span><span data-token-index="1"><span>and</span></span><span>–only-entrypoint </span><span>options, which allow you to either reduce the CFG to just the main body of the program or limit it to its entrypoint only. (We’ll cover this later when presenting the Dotting module)</span></p> 
+<p><span><b><i>Rodata Extraction and Decoding</i></b></span></p> 
+<p><span>Solana programs often include embedded constants or strings in their read-only data segment (commonly called rodata). These might be error messages, program identifiers, or other magic values that are referenced by the code. sol-azy’s reverse engine automatically extracts and decodes the rodata from the binary and cross-references it in the disassembly output. In practice, this means when the assembly code loads a pointer to a string or constant, sol-azy will annotate the disassembly with the actual value (e.g., showing the literal error message or number). By tracking rodata usage, sol-azy gives more semantic context to the otherwise opaque assembly, you might immediately understand that a particular block of code is, say, the error handler for “Insufficient funds” just by seeing that string in the output.</span></p><p><u><i><span data-token-index="0">Our </span><code>immediate_data_table.out</code><span data-token-index="2"> (with </span><code>immediate</code><span> referring to the offsets/addresses where the data resides in the bytecode):</span></i></u></p> 
+<img alt="" height="586" loading="lazy" src="image-05.png" width="1024"/> 
+<h2 id="section-6">Other Features: Build, Dotting, and Fetcher Modules</h2> 
+<h3 id="section-7"><span><u>Aside from the core analysis engines, sol-azy includes additional features to support a full analysis workflow:</u></span></h3> 
+<p><span><b><i>Build Module</i></b></span></p> 
+<p><!-- notionvc: ed8e68fa-227f-486d-a66c-9cc20f243539 --></p><p><!-- notionvc: 20b3a4e6-2e98-489d-a84e-549b150b3a16 --></p><p><code>build</code><span> command is used to compile Solana programs from a specified project directory. It supports both <b>Anchor</b> and <b>native SBF</b> (Solana BPF) projects.</span></p><p><span>This feature is designed to automatically detect the project type (Anchor or SBF) based on the presence of specific files like </span><code>Anchor.toml</code><span> or </span><code>solana-program</code><span> in </span><code>Cargo.toml</code><span>, and it triggers the appropriate build command accordingly.</span></p><p><span>Key features:</span></p><ul><li><span>Simple usage via CLI (2 args, in/out directories)</span></li><li><span>Pre-checks for required tools (cargo, anchor)</span></li><li><span>Auto-creates output directories if needed</span></li><li><span>Handles version switching with an optional flag</span></li></ul><p><span><i><u>Note: The build feature is still in WIP</u></i></span></p> 
+<p><span><b><i>Dotting (CFG Editing) Module</i></b></span></p> 
+<p><span>The purpose of this module is to gradually reconstruct a meaningful CFG when analysing large programs, where the full graph can be overwhelming. When using the </span><code>–reduced</code><span> or </span><code>–only-entrypoint</code><span> flags during CFG generation, sol-azy outputs a minimal graph containing only a subset of functions (for example, only those reachable from the entrypoint or excluding library functions). The dotting module lets you then selectively re-insert specific functions (clusters) from the full graph into the reduced CFG. This workflow is useful during deep analysis: you start with a minimal graph and, as you explore the disassembly or identify relevant functions, you can progressively “grow” your graph by adding functions of interest. It’s particularly effective for large projects where the default full CFG is too dense to be practical. This feature is designed to be coupled with the </span><code>–reduced</code><span> or </span><code>–only-entrypoint</code><span> options to provide a flexible, iterative approach to CFG analysis.</span></p>
+<div><code data-token-index="0">—only-entrypoint</code>edit example <span data-token-index="2">(using the MangoV4 project, randomly chosen for the next part about a real-life example)</span>:</div> 
+<p><span data-token-index="0">Before:</span><!-- notionvc: 2214e28f-b09e-4f2e-8d8b-15f3b27a2a01 --></p> <pre data-language="dot"><code>digraph {
+graph [
+rankdir=LR;
+concentrate=True;
+style=filled;
+color=lightgrey;
+];
+node [
+shape=rect;
+style=filled;
+fillcolor=white;
+fontname="Courier New";
+];
+edge [
+fontname="Courier New";
+];
+  subgraph cluster_369287 {
+    label="entrypoint";
+    tooltip=lbb_369287;
+    lbb_369287 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;mov64&lt;/td&gt;&lt;td align="left"&gt;r2, r1&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;mov64&lt;/td&gt;&lt;td align="left"&gt;r1, r10&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;add64&lt;/td&gt;&lt;td align="left"&gt;r1, -80&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;call&lt;/td&gt;&lt;td align="left"&gt;function_387396&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+    lbb_369291 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r2, [r10-0x50]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r1, [r10-0x48]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;stxdw&lt;/td&gt;&lt;td align="left"&gt;[r10-0x68], r1&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r4, [r10-0x38]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;stxdw&lt;/td&gt;&lt;td align="left"&gt;[r10-0x58], r4&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r3, [r10-0x40]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;stxdw&lt;/td&gt;&lt;td align="left"&gt;[r10-0x60], r3&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r1, [r10-0x28]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r5, [r10-0x30]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;stxdw&lt;/td&gt;&lt;td align="left"&gt;[r10-0x1000], r5&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;stxdw&lt;/td&gt;&lt;td align="left"&gt;[r10-0xff8], r1&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;mov64&lt;/td&gt;&lt;td align="left"&gt;r1, r10&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;add64&lt;/td&gt;&lt;td align="left"&gt;r1, -32&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;mov64&lt;/td&gt;&lt;td align="left"&gt;r5, r10&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;call&lt;/td&gt;&lt;td align="left"&gt;function_336430&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+    lbb_369306 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;mov64&lt;/td&gt;&lt;td align="left"&gt;r6, 0&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxw&lt;/td&gt;&lt;td align="left"&gt;r1, [r10-0x20]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;jeq&lt;/td&gt;&lt;td align="left"&gt;r1, 22, lbb_369321&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+    lbb_369309 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r1, [r10-0x8]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;stxdw&lt;/td&gt;&lt;td align="left"&gt;[r10-0x38], r1&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r1, [r10-0x10]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;stxdw&lt;/td&gt;&lt;td align="left"&gt;[r10-0x40], r1&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r1, [r10-0x18]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;stxdw&lt;/td&gt;&lt;td align="left"&gt;[r10-0x48], r1&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r1, [r10-0x20]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;stxdw&lt;/td&gt;&lt;td align="left"&gt;[r10-0x50], r1&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;mov64&lt;/td&gt;&lt;td align="left"&gt;r1, r10&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;add64&lt;/td&gt;&lt;td align="left"&gt;r1, -80&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;call&lt;/td&gt;&lt;td align="left"&gt;function_389183&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+    lbb_369320 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;mov64&lt;/td&gt;&lt;td align="left"&gt;r6, r0&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+    lbb_369321 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;mov64&lt;/td&gt;&lt;td align="left"&gt;r1, r10&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;add64&lt;/td&gt;&lt;td align="left"&gt;r1, -104&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;call&lt;/td&gt;&lt;td align="left"&gt;function_17014&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+    lbb_369324 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;mov64&lt;/td&gt;&lt;td align="left"&gt;r0, r6&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;exit&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+  }
+  lbb_369287 -&gt; lbb_409579 [style=dotted; arrowhead=none];
+  lbb_369287 -&gt; {lbb_369291};
+  lbb_369291 -&gt; lbb_369287 [style=dotted; arrowhead=none];
+  lbb_369291 -&gt; {lbb_369306};
+  lbb_369306 -&gt; lbb_369291 [style=dotted; arrowhead=none];
+  lbb_369306 -&gt; {lbb_369309 lbb_369321};
+  lbb_369309 -&gt; lbb_369306 [style=dotted; arrowhead=none];
+  lbb_369309 -&gt; {lbb_369320};
+  lbb_369320 -&gt; lbb_369309 [style=dotted; arrowhead=none];
+  lbb_369320 -&gt; {lbb_369321};
+  lbb_369321 -&gt; lbb_369306 [style=dotted; arrowhead=none];
+  lbb_369321 -&gt; {lbb_369324};
+  lbb_369324 -&gt; lbb_369321 [style=dotted; arrowhead=none];
+}</code></pre>
+<img alt="" height="305" loading="lazy" src="image-06.png" width="1024"/> 
+<p><span data-token-index="0">After adding a cluster:</span><!-- notionvc: 2214e28f-b09e-4f2e-8d8b-15f3b27a2a01 --></p> <pre data-language="dot"><code>digraph {
+graph [
+rankdir=LR;
+concentrate=True;
+style=filled;
+color=lightgrey;
+];
+node [
+shape=rect;
+style=filled;
+fillcolor=white;
+fontname="Courier New";
+];
+edge [
+fontname="Courier New";
+];
+  subgraph cluster_369287 {
+    label="entrypoint";
+    tooltip=lbb_369287;
+    lbb_369287 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;mov64&lt;/td&gt;&lt;td align="left"&gt;r2, r1&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;mov64&lt;/td&gt;&lt;td align="left"&gt;r1, r10&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;add64&lt;/td&gt;&lt;td align="left"&gt;r1, -80&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;call&lt;/td&gt;&lt;td align="left"&gt;function_387396&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+    lbb_369291 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r2, [r10-0x50]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r1, [r10-0x48]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;stxdw&lt;/td&gt;&lt;td align="left"&gt;[r10-0x68], r1&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r4, [r10-0x38]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;stxdw&lt;/td&gt;&lt;td align="left"&gt;[r10-0x58], r4&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r3, [r10-0x40]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;stxdw&lt;/td&gt;&lt;td align="left"&gt;[r10-0x60], r3&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r1, [r10-0x28]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r5, [r10-0x30]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;stxdw&lt;/td&gt;&lt;td align="left"&gt;[r10-0x1000], r5&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;stxdw&lt;/td&gt;&lt;td align="left"&gt;[r10-0xff8], r1&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;mov64&lt;/td&gt;&lt;td align="left"&gt;r1, r10&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;add64&lt;/td&gt;&lt;td align="left"&gt;r1, -32&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;mov64&lt;/td&gt;&lt;td align="left"&gt;r5, r10&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;call&lt;/td&gt;&lt;td align="left"&gt;function_336430&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+    lbb_369306 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;mov64&lt;/td&gt;&lt;td align="left"&gt;r6, 0&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxw&lt;/td&gt;&lt;td align="left"&gt;r1, [r10-0x20]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;jeq&lt;/td&gt;&lt;td align="left"&gt;r1, 22, lbb_369321&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+    lbb_369309 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r1, [r10-0x8]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;stxdw&lt;/td&gt;&lt;td align="left"&gt;[r10-0x38], r1&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r1, [r10-0x10]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;stxdw&lt;/td&gt;&lt;td align="left"&gt;[r10-0x40], r1&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r1, [r10-0x18]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;stxdw&lt;/td&gt;&lt;td align="left"&gt;[r10-0x48], r1&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r1, [r10-0x20]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;stxdw&lt;/td&gt;&lt;td align="left"&gt;[r10-0x50], r1&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;mov64&lt;/td&gt;&lt;td align="left"&gt;r1, r10&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;add64&lt;/td&gt;&lt;td align="left"&gt;r1, -80&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;call&lt;/td&gt;&lt;td align="left"&gt;function_389183&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+    lbb_369320 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;mov64&lt;/td&gt;&lt;td align="left"&gt;r6, r0&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+    lbb_369321 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;mov64&lt;/td&gt;&lt;td align="left"&gt;r1, r10&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;add64&lt;/td&gt;&lt;td align="left"&gt;r1, -104&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;call&lt;/td&gt;&lt;td align="left"&gt;function_17014&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+    lbb_369324 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;mov64&lt;/td&gt;&lt;td align="left"&gt;r0, r6&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;exit&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+  }
+  lbb_369287 -&gt; lbb_409579 [style=dotted; arrowhead=none];
+  lbb_369287 -&gt; {lbb_369291};
+  lbb_369291 -&gt; lbb_369287 [style=dotted; arrowhead=none];
+  lbb_369291 -&gt; {lbb_369306};
+  lbb_369306 -&gt; lbb_369291 [style=dotted; arrowhead=none];
+  lbb_369306 -&gt; {lbb_369309 lbb_369321};
+  lbb_369309 -&gt; lbb_369306 [style=dotted; arrowhead=none];
+  lbb_369309 -&gt; {lbb_369320};
+  lbb_369320 -&gt; lbb_369309 [style=dotted; arrowhead=none];
+  lbb_369320 -&gt; {lbb_369321};
+  lbb_369321 -&gt; lbb_369306 [style=dotted; arrowhead=none];
+  lbb_369321 -&gt; {lbb_369324};
+  lbb_369324 -&gt; lbb_369321 [style=dotted; arrowhead=none];
+
+subgraph cluster_17014 {
+    label="function_17014";
+    tooltip=lbb_17014;
+    lbb_17014 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;mov64&lt;/td&gt;&lt;td align="left"&gt;r6, r1&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r7, [r6+0x10]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;jeq&lt;/td&gt;&lt;td align="left"&gt;r7, 0, lbb_17036&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+    lbb_17017 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r8, [r6+0x8]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;mul64&lt;/td&gt;&lt;td align="left"&gt;r7, 48&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;add64&lt;/td&gt;&lt;td align="left"&gt;r8, 16&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;ja&lt;/td&gt;&lt;td align="left"&gt;lbb_17043&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+    lbb_17043 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r1, [r8-0x8]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r2, [r1+0x0]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;add64&lt;/td&gt;&lt;td align="left"&gt;r2, -1&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;stxdw&lt;/td&gt;&lt;td align="left"&gt;[r1+0x0], r2&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;jne&lt;/td&gt;&lt;td align="left"&gt;r2, 0, lbb_17021&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+    lbb_17048 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r2, [r1+0x8]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;add64&lt;/td&gt;&lt;td align="left"&gt;r2, -1&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;stxdw&lt;/td&gt;&lt;td align="left"&gt;[r1+0x8], r2&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;jne&lt;/td&gt;&lt;td align="left"&gt;r2, 0, lbb_17021&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+    lbb_17052 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;mov64&lt;/td&gt;&lt;td align="left"&gt;r2, 32&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;mov64&lt;/td&gt;&lt;td align="left"&gt;r3, 8&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;call&lt;/td&gt;&lt;td align="left"&gt;function_373318&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+    lbb_17055 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;ja&lt;/td&gt;&lt;td align="left"&gt;lbb_17021&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+    lbb_17021 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r1, [r8+0x0]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r2, [r1+0x0]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;add64&lt;/td&gt;&lt;td align="left"&gt;r2, -1&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;stxdw&lt;/td&gt;&lt;td align="left"&gt;[r1+0x0], r2&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;jne&lt;/td&gt;&lt;td align="left"&gt;r2, 0, lbb_17033&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+    lbb_17026 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r2, [r1+0x8]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;add64&lt;/td&gt;&lt;td align="left"&gt;r2, -1&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;stxdw&lt;/td&gt;&lt;td align="left"&gt;[r1+0x8], r2&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;jne&lt;/td&gt;&lt;td align="left"&gt;r2, 0, lbb_17033&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+    lbb_17030 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;mov64&lt;/td&gt;&lt;td align="left"&gt;r2, 40&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;mov64&lt;/td&gt;&lt;td align="left"&gt;r3, 8&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;call&lt;/td&gt;&lt;td align="left"&gt;function_373318&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+    lbb_17033 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;add64&lt;/td&gt;&lt;td align="left"&gt;r8, 48&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;add64&lt;/td&gt;&lt;td align="left"&gt;r7, -48&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;jne&lt;/td&gt;&lt;td align="left"&gt;r7, 0, lbb_17043&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+    lbb_17036 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r2, [r6+0x0]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;jeq&lt;/td&gt;&lt;td align="left"&gt;r2, 0, lbb_17056&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+    lbb_17038 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;ldxdw&lt;/td&gt;&lt;td align="left"&gt;r1, [r6+0x8]&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;mul64&lt;/td&gt;&lt;td align="left"&gt;r2, 48&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;mov64&lt;/td&gt;&lt;td align="left"&gt;r3, 8&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="left"&gt;call&lt;/td&gt;&lt;td align="left"&gt;function_373318&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+    lbb_17042 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;ja&lt;/td&gt;&lt;td align="left"&gt;lbb_17056&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+    lbb_17056 [label=&lt;&lt;table border="0" cellpadding="3"&gt;&lt;tr&gt;&lt;td align="left"&gt;exit&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&gt;];
+  }
+
+lbb_17014 -&gt; {lbb_17017 lbb_17036};
+lbb_17017 -&gt; {lbb_17043};
+lbb_17021 -&gt; {lbb_17026 lbb_17033};
+lbb_17026 -&gt; {lbb_17030 lbb_17033};
+lbb_17030 -&gt; {lbb_17033};
+lbb_17033 -&gt; {lbb_17036 lbb_17043};
+lbb_17036 -&gt; {lbb_17038 lbb_17056};
+lbb_17038 -&gt; {lbb_17042};
+lbb_17042 -&gt; {lbb_17056};
+lbb_17043 -&gt; {lbb_17021 lbb_17048};
+lbb_17048 -&gt; {lbb_17021 lbb_17052};
+lbb_17052 -&gt; {lbb_17055};
+lbb_17055 -&gt; {lbb_17021};
+lbb_409579 -&gt; {lbb_17014 lbb_369287};
+}</code></pre>
+<img alt="" height="181" loading="lazy" src="image-07.png" width="1024"/> 
+<p><span><b><i>Fetcher Module (On-Chain Bytecode &amp; Data Retrieval)</i></b></span></p> 
+<p><span>By supplying a Solana program ID, the fetcher downloads the (on-chain) deployed bytecode and saves it locally as </span><code>fetched_program.so</code><span>. It also supports non-executable accounts, making it capable of dumping arbitrary on-chain data. Here’s how it works:</span></p>
+<p><!-- notionvc: 9e0344fd-2df4-4bc5-bdab-b12956aace67 --></p>
+<ol>
+<li><strong>Executable Accounts (Programs):</strong>
+<ul>
+<li>The fetcher automatically detects whether the account is marked as executable.</li>
+<li>If the program uses the <strong>Upgradeable Loader</strong> (common on Solana), it transparently resolves the indirection to locate the actual <code>ProgramData</code>.</li>
+<li>It trims any unnecessary bytes before the ELF header and saves a clean <code>.so</code> binary ready for disassembly or reverse engineering.</li>
+</ul>
+</li>
+<li><strong>Non-Executable Accounts (AccountInfo):</strong>
+<ul>
+<li>If the account isn’t executable, fetcher simply dumps the raw byte content to a <code>.bin</code> file.</li>
+<li>Fetch Anchor’s struct <i>discriminator</i></li>
+</ul>
+</li>
+</ol>
+<div><span>When dumping non-executable accounts, fetcher automatically prints the first 8 bytes of the data, which in <b>Anchor</b> programs typically corresponds to the <i>discriminator</i> (a hash uniquely identifying the struct type).</span></div>
+<div><span>This provides hints about the account’s purpose and can be invaluable for auditing or reverse-engineering state accounts.</span></div> 
+<h2 id="section-8">CLI Demo: Realistics Little Examples Command Flow</h2> 
+<p><span>To illustrate how sol-azy can be used in practice, let’s walk through 2 scenarios that uses several of its features. First example, imagine you are a security auditor examining a Solana program, you only have the on-chain program ID. Secondly, let’s take the POV where the project has an open-source code on GitHub. </span></p> 
+<p><span><b><i>Black-box scenario</i></b></span></p> 
+<p><span>Firstly, you want to fetch the deployed bytecode. Here’s how you could do it with sol-azy:</span></p> <pre data-language="bash"><code>cargo run --release -- fetcher -p 4MangoMjqJ2firMokCjjGgoK8d4MXcrgL7XJaL3w6fVg -o .</code></pre>
+<p><i><span>This command dump from the blockchain the program’s ELF into a file named </span><code>fetched_program.so</code><span>. In one step, you’ve obtained the exact code running on-chain, without manually dealing with RPC calls.</span></i></p><p><span>Next, we use the reverse engineering engine to examine the binary. You can produce a reduced control flow graph, (here we only want the <i>entrypoint</i> cluster):</span></p> <pre data-language="bash"><code>cargo run --release -- reverse \
+  --mode cfg \
+  --out-dir ./ \
+  --bytecodes-file fetched_program.so  \
+--labeling --only-entrypoint
+
+mv cfg.dot cfg_reduced.dot # we'll use it later</code></pre>
+<p><span>Then we can both get disassembly and the full CFG (the full CFG will be used for dotting):</span></p> <pre data-language="bash"><code>cargo run --release -- reverse \
+  --mode both \
+  --out-dir ./ \
+  --bytecodes-file fetched_program.so  \
+--labeling
+
+# commands below just to simplify our life later
+mv cfg.dot cfg_full.dot
+dot -Tsvg cfg_reduced.dot &gt; cfg_reduced.svg</code></pre>
+<p><span>Now let’s check about <b>Immediate Tracking</b> to inspect all constant data loaded via </span><code>LD_*</code><span> instructions, particularly </span><code>.rodata</code><span> strings embedded in the bytecode. As shown in the image below, it produces a clean table where every reference to such data is listed with its corresponding memory offset and decoded value. You can quickly scroll through this table to identify interesting strings, such as error messages, program paths, or even function identifiers, that might reveal sensitive logic or security-relevant checks.</span></p> 
+<img alt="" height="554" loading="lazy" src="image-08.png" width="1024"/> 
+<p><span>In the example above, you can clearly spot strings like <b>“instructions between FlashLoanBegin and End may not use the Mango program accountbank vault”</b> or <b>“the mango account passed to FlashLoanBegin and End must matchthe trailing vault”</b>. These strings provide immediate clues about the program’s behavior and potential areas of interest for further analysis. This makes the immediate tracking table a powerful reconnaissance tool, allowing you to locate critical logic areas without having to fully reverse the disassembly first.</span></p> 
+<img alt="" height="625" loading="lazy" src="image-09.png" width="500"/> 
+<p><span>Now we can just take a fast look at our disassembly, searching for things like the <b>FlashLoan’</b>s strings above, and we can find things like:</span></p> <pre data-language="asm"><code>...
+
+lbb_120970:
+    mov64 r1, r9                                    r1 = r9
+    lddw r2, 0x100326afa --&gt; b"1\xd8\xe1}\xde\x0fY\xc1\x8e\x07[\x98\xca\x9dke\xc8\xfa$\xedPm l^\xbe b"\x00\x00\x00\x00\xc5\x09\x00\x00\x11\x00\x00\x00\x16\x00\x00\x00\xc8\x09\…        r2 load str located at 4298246740
+    call function_334705                    
+    mov64 r1, r10                                   r1 = r10
+    add64 r1, -176                                  r1 += -176   ///  r1 = r1.wrapping_add(-176 as i32 as i64 as u64)
+    lddw r2, 0x100320a54 --&gt; b"\x00\x00\x00\x00\xc5\x09\x00\x00\x11\x00\x00\x00\x16\x00\x00\x00\xc8\x09\…        r2 load str located at 4298246740
+    call function_10004                     
+    mov64 r1, 2                                     r1 = 2 as i32 as i64 as u64
+    stxb [r10-0x98], r1                     
+    mov64 r1, 185                                   r1 = 185 as i32 as i64 as u64
+    stxw [r10-0xd0], r1                     
+    mov64 r1, 48                                    r1 = 48 as i32 as i64 as u64
+    stxdw [r10-0xd8], r1                    
+    lddw r1, 0x100322af2 --&gt; b"programs/mango-v4/src/instructions/flash_loan.rsea"        r1 load str located at 4298255090
+    stxdw [r10-0xe0], r1                    
+    mov64 r1, 6000                                  r1 = 6000 as i32 as i64 as u64
+    stxw [r10-0x50], r1                     
+    mov64 r6, 0                                     r6 = 0 as i32 as i64 as u64
+    stxdw [r10-0xe8], r6                    
+    mov64 r7, r10                                   r7 = r10
+    add64 r7, -800                                  r7 += -800   ///  r7 = r7.wrapping_add(-800 as i32 as i64 as u64)
+    mov64 r2, r10                                   r2 = r10
+    add64 r2, -232                                  r2 += -232   ///  r2 = r2.wrapping_add(-232 as i32 as i64 as u64)
+    mov64 r1, r7                                    r1 = r7
+    call function_384657                    
+    mov64 r1, 1                                     r1 = 1 as i32 as i64 as u64
+    stxdw [r10-0xd0], r1                    
+    lddw r1, 0x10032fbc8 --&gt; b"\x00\x00\x00\x00\xb1,2\x00Q\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x…        r1 load str located at 4298308552
+    stxdw [r10-0xd8], r1                    
+    lddw r1, 0x100320150 --&gt; b"\x04y\xd5-\xed\xbfk\xc5\xec\xd0\x9d\x84SJ4\xae\xa5\x97PC\xb3o\xd0+$e\x0b\…        r1 load str located at 4298244432
+    stxdw [r10-0xc8], r1                    
+    stxdw [r10-0xc0], r6                    
+    stxdw [r10-0xe8], r6                    
+    mov64 r6, r10                                   r6 = r10
+    add64 r6, -384                                  r6 += -384   ///  r6 = r6.wrapping_add(-384 as i32 as i64 as u64)
+    mov64 r4, r10                                   r4 = r10
+    add64 r4, -232                                  r4 += -232   ///  r4 = r4.wrapping_add(-232 as i32 as i64 as u64)
+    mov64 r1, r6                                    r1 = r6
+    lddw r2, 0x100322cb1 --&gt; b"instructions between FlashLoanBegin and End may not use the Mango program…        r2 load str located at 4298255537
+    mov64 r3, 81                                    r3 = 81 as i32 as i64 as u64
+    ja lbb_121774       
+    
+    ...</code></pre>
+<p><span>In this example, the disassembly clearly shows that the instruction sequence is tied to flash loan security checks. <i>(might be an interesting point for research)</i></span></p> 
+<p><span>Now: <b>Interactive CFG Editing</b> <i>(advanced).</i> We’re with our reduced control flow graph that was generated using the </span><code>–only-entrypoint</code><span> flag. This gives us a minimal view of the program’s structure, usually limited to just the entrypoint function.</span></p> <pre data-language="bash"><code>dot -Tsvg cfg_reduced.dot &gt; cfg_reduced.svg</code></pre>
+<img alt="" height="305" loading="lazy" src="image-10.png" width="1024"/> 
+<p><!-- notionvc: 3714be7a-7e9c-4559-9b01-be2971ceb850 --></p><blockquote><p>At this stage, when opening <code>cfg_reduced.svg</code>, we observe that only a single cluster, corresponding to the entrypoint, is present.</p><p>Upon inspection of the disassembly or node labels, we see that this entrypoint function invokes <code>function_17014</code> at the end.</p></blockquote> 
+<p><span>Since function_17014 is not currently included in the reduced graph, we decide to manually add it back using the dotting module. We create a small JSON configuration file specifying the ID of the cluster we want to re-insert:</span></p> <pre data-language="json"><code>// functions.json
+{
+    "functions": ["17014"]
+}</code></pre>
+<p><span>Now we run the dotting command, which compares the reduced and full .dot files, and 17014, including any edges that are compatible with the existing graph:</span></p> <pre data-language="bash"><code>cargo run --release -- dotting -c functions.json -f cfg_full.dot -r cfg_reduced.dot</code></pre>
+<blockquote><p>After this operation, the tool produces a new file named <b>updated_cfg_reduced.dot</b>. It contains the original reduced CFG plus the full definition of <b>function_17014</b> as extracted from the complete graph.<!-- notionvc: 67efdd83-56c3-4e2c-a960-9035a202f350 --></p></blockquote> 
+<p><span>Finally, we render the updated graph to see the result:</span></p> <pre data-language="bash"><code>dot -Tsvg updated_cfg_reduced.dot &gt; cfg_updated.svg</code></pre>
+<img alt="" height="181" loading="lazy" src="image-11.png" width="1024"/> 
+<blockquote><p>Opening <b>cfg_updated.svg</b>, we can now see that <b>function_17014</b> has been successfully added. This expanded view allows us to analyze the callee’s logic in context, without needing to visualize the entire program. </p><p>We can repeat this process iteratively to construct a CFG tailored to the parts of the program that are relevant to our analysis.</p></blockquote> 
+<p><span>This workflow illustrates how dotting acts as a controlled lens, giving you the power to build up your graph gradually as your investigation progresses.</span></p><p><span><i><u>Note: The dotting module includes an internal cache system. After the first execution, subsequent runs become almost instantaneous, even on large .dot files, dramatically improving iteration speed during interactive analysis.</u></i></span></p> 
+<p><span><b><i>White-Box scenario</i></b></span></p> 
+<p><span>Now, we can clone the source code of mango and run the sast option on it.</span></p> <pre data-language="bash"><code>git clone https://github.com/blockworks-foundation/mango-v4
+cd sol-azy
+cargo run --release -- sast --target-dir ../mango-v4/programs/mango-v4</code></pre>
+<img alt="" height="806" loading="lazy" src="image-12.png" width="1000"/> 
+<p><span>Then you can triage the matches found during the scan, for example in the <span>Saturating math operation usage</span> results:</span></p> <pre data-language="text"><code>Matches found: 22
+...
+../../VulnResearch/mango-v4/programs/mango-v4/src/health/client.rs:79:31
+...</code></pre>
+<p><span>We got this sink</span></p> <pre data-filename="client.rs" data-language="rust"><code>...
+    fn apply_limits_to_swap(
+        account: &amp;MangoAccountValue,
+        source_bank: &amp;Bank,
+        source_oracle_price: I80F48,
+        target_bank: &amp;Bank,
+        price: I80F48,
+        source_unlimited: I80F48,
+    ) -&gt; Result {
+        ...
+        // deposit limit on target
+        let available_deposits = target_bank.remaining_deposits_until_limit();
+        let potential_target_unlimited = potential_source.saturating_mul(price);
+        let potential_target = potential_target_unlimited
+            .min(available_deposits.saturating_add(-target_pos.min(I80F48::ZERO)));
+	...
+    }
+...</code></pre>
+<h2 id="section-9">Conclusion: Why sol-azy Matters, Who Should Use It, and What’s Next</h2> 
+<p><span>In conclusion, sol-azy offers a powerful and unified solution for anyone working with Solana programs, from security auditors to new developers. By bringing together static analysis, reverse engineering capabilities, and convenient on-chain data retrieval into a single CLI toolkit.</span></p><p><span>Whether you’re verifying the security of closed-source programs, dissecting complex bytecode, or auditing deployed contracts, sol-azy provides the essential tools to understand and interact with Solana’s unique program ecosystem on your terms.</span></p><p><span>sol-azy is an early version, but we’ve got big plans to make it even better:</span></p><ul><li><strong>Finish Build Command:</strong> We’re working to make the <code>build</code> command smoother and more flexible for all Solana project types.</li><li><strong>Smarter Static Analysis:</strong> Our static analysis engine is getting an upgrade. We’ll add more ways to write rules and support analyzing other intermediate representations like <strong>MIR</strong> and <strong>LLVM IR</strong> for even deeper insights.</li><li><strong>And more</strong></li></ul><p><strong>Your feedback and contributions are always welcome as we keep building it out.</strong></p><p><!-- notionvc: a6e298fb-926d-4577-9c80-7c2afce5f667 --></p> 
+<h2 id="section-10">References</h2> 
+<ul><li><a href="https://starlark-lang.org/spec.html" rel="noopener" target="_blank">Starlark language specs</a></li><li><a href="https://docs.rs/starlark/latest/starlark/" rel="noopener" target="_blank">starlark-rs crate</a></li><li><a href="https://crates.io/crates/syn" rel="noopener" target="_blank">syn crate</a></li><li><a href="https://github.com/Auditware/radar" rel="noopener" target="_blank">Radar</a></li><li><a href="https://github.com/anza-xyz" rel="noopener" target="_blank">sbpf-solana by Anza (anza-xyz)</a></li><li><a href="https://github.com/bazelbuild/starlark" rel="noopener" target="_blank">Starlark language reference (GitHub)</a></li><li><a href="https://github.com/bazelbuild/starlark/blob/master/spec.md" rel="noopener" target="_blank">Starlark spec &amp; built-ins</a></li><li><a href="https://bazel.build/rules/language" rel="noopener" target="_blank">Starlark in Bazel (docs)</a></li><li><a href="https://buck2.build/docs/developers/starlark/environment/" rel="noopener" target="_blank">Starkark in Buck2 (docs)</a></li><li><a href="https://github.com/FuzzingLabs/sol-azy" rel="noopener" target="_blank">sol-azy</a></li><li><a href="https://fuzzinglabs.github.io/sol-azy/" rel="noopener" target="_blank">sol-azy documentation</a></li></ul><p><!-- notionvc: 063e089a-9206-434f-ab40-17ddb48d141a --></p><p><!-- notionvc: 68f51de6-15ed-418b-b966-75f055a18489 --></p><p><!-- notionvc: 67fcaaa9-2427-4caa-a852-0655f79a7db5 --></p><p><!-- notionvc: 32bdb243-f61d-422e-8507-747e79c5b863 --></p> 

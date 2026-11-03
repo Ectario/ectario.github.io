@@ -1,0 +1,151 @@
+
+<p>New feature <span data-token-index="1">Recap</span> added to <code>sol-azy</code>! (See <a data-token-index="5" href="/articles/introducing-solazy/" rel="noopener noreferrer"><span>this article</span></a> if you don’t know what is sol-azy)</p> 
+<img alt="" height="499" loading="lazy" src="image-01.png" width="881"/> 
+<h2 id="section-1">What's new?</h2> 
+<p>The new feature <span>Recap</span> turns an Anchor project into a compact, audit-friendly report that you can skim in minutes. It walks the repository, aligns the IDL with the <code>#[derive(Accounts)]</code> definitions, and writes a single Markdown file <code>recap-solazy.md</code> that summarizes each instruction across six signals: <span data-token-index="5">Instruction</span>, <span data-token-index="7">Signers</span>, <span data-token-index="9">Writable</span>, <span data-token-index="11">Constrained</span>, <span data-token-index="13">Seeded</span>, and <span data-token-index="15">Memory</span>.</p> 
+<h2 id="section-2">Context / Problem solved<!-- notionvc: ab859200-f8c1-4102-b09a-b6dbbdf6dc01 --></h2> 
+<p><span><span>The first hour of any Anchor audit repeats the same motions: identifying the entrypoints, understanding the logic structure, mapping access control, etc. Doing this by hand means jumping back and forth across monstrous large </span></span><code>Accounts</code><span> definitions with stacked attributes, which is a slow and error-prone way to build an initial attack surface map.</span></p> 
+<img alt="" height="499" loading="lazy" src="image-02.png" width="888"/> 
+<p>You need a stable view of <strong>who can sign</strong>, <strong>what is writable</strong>, <strong>how writable state is bound</strong>, <strong>which accounts are PDAs (seeds)</strong>, and <strong>where memory is allocated or reallocated</strong>.</p><p>Because in real Anchor codebases, the friction comes from the structure of the source itself. For example any signers, seeds, rules, etc., are all encoded in <code>#[derive(Accounts)]</code> structs, which are attribute-heavy blocks that can easily span 50 to 100 lines for a single instruction. Nothing is “hidden”, but the information density is so high that extracting only what you need becomes slow and mentally expensive.</p><p><!-- notionvc: 62fa7df0-b72e-4256-8563-bf4a8c4e48cf --></p><p>You don’t struggle because the data is missing; you struggle because it’s embedded inside walls of attributes:</p> <pre data-filename="lib.rs" data-language="rust"><code>#[account(
+    init,
+    payer = payer,
+    seeds = [...],
+    bump,
+    token::mint = ...,
+    token::authority = ...,
+    constraint = foo.key() == bar.authority,
+    realloc = ...,
+)]
+pub account_a: Account,</code></pre>
+<p>Multiply that by 8-12 accounts per instruction and repeat for every programs.</p><p>Even simple questions require scanning a large block:</p><ul><li>Who are the signers for this instruction?</li><li>Which writable accounts matter and why are they safe to mutate?</li><li>Is this PDA derived from deterministic seeds or supplied externally?</li><li>Which SPL authority is actually controlling this token account?</li><li>Does this instruction allocate or reallocate memory?</li></ul><p>Anchor makes these patterns explicit, but not lightweight to parse visually.</p><p><!-- notionvc: 3e96e268-4d0a-450e-8cf1-4e341a0255fa --></p><p>A single missed <code>has_one</code>, a forgotten seed, or a misread SPL shorthand is all it takes to misunderstand the safety properties of an instruction.</p> 
+<img alt="" height="480" loading="lazy" src="image-03.png" width="640"/> 
+<p>Monorepos make this even worse.</p><p>You jump between multiple programs, each with similar naming patterns but subtly different invariants. Some instructions use generic forms like <code>Context&lt;‘_,</code><code>‘_,</code><code>‘_,’info, Foo&lt;‘info&gt;&gt;</code>, others use plain <code>Context&lt;Foo&gt;</code>. When pivoting between instructions, you constantly re-open the same files just to remind yourself which account was seeded, which one was SPL-bound, or which signer actually gates a writable account. The issue isn’t difficulty—it’s repetition and cognitive load.</p><p>From a vulnerability-research perspective, you want fast filters: “writable but not constrained nor seeded,” “memory grows via <code>realloc</code>,” “SPL accounts without helper bindings,” “multi-signer flows where authorities can be confused.” Building these filters from scratch on each repo costs cycles and increases the chance you miss edge cases.</p><p><!-- notionvc: 39d2dec4-390e-4cbb-9354-1ab7e33ed24e --></p><p><strong>Recap</strong> exists to remove that repetitive mental bookkeeping. It doesn’t judge correctness and it’s not a linter. It gives you a single, faithful table per instruction so you can (a) do first-pass reconnaissance quickly, and (b) keep a stable reference during the rest of the audit. That cuts down on code hopping, reduces context thrashing, and lets you spend time on the parts that actually require reasoning: constraint logic, CPI call chains, seed design, state invariants, etc..</p> 
+<h2 id="section-3">The Feature</h2> 
+<p>Recap produces a single file, <code>recap-solazy.md</code>, containing one compact table per Anchor program <em>(each Anchor program found under </em><code><i>target/idl/</i></code><em> gets its own section)</em>.</p>
+<p>Each row represents an instruction, and each column captures a different axis of its access surface: <strong>Signers</strong>, <strong>Writable</strong>, <strong>Constrained</strong>, <strong>Seeded</strong>, and <strong>Memory</strong>.</p>
+<p><strong>Signers</strong> and <strong>Writable</strong> come directly from how the instruction is declared; you immediately know who must sign and which accounts can be mutated. This removes the constant need to jump back to handlers or large account structs just to confirm whether something is mutable or gated by a user, an admin, or a PDA-derived authority.</p>
+<p><strong>Constrained</strong> reflects the binding logic declared in <code>#[account(…)]</code>: <code>has_one</code>, <code>address</code>, explicit predicates under <code>constraint = …</code>, <code>owner</code>, as well as SPL shorthands like <code>token::mint</code>, <code>token::authority</code>, <code>mint::decimals</code>, <code>mint::freeze_authority</code>, and ATA derivation hints. All of these are reduced to compact tags so you see the relationships and safety assumptions at a glance instead of digging through gazillion-line struct definitions.</p>
+<p><strong>Seeded</strong> highlights accounts with explicit PDA derivations (<code>seeds = […]</code>). It answers the “which accounts are deterministic, and therefore which ones might be used as signers in CPIs?”.</p>
+<p><strong>Memory</strong> surfaces places where the program decides account size or mutates it: <code>space</code>, <code>realloc</code>, and <code>realloc::zero</code>. These are the instructions where you need to check who controls growth, how zeroing is handled, and whether resizing bypasses invariants.</p>
+<p><!-- notionvc: 1748fb71-efc3-457a-bcd6-b1767d929c16 --></p>
+<p>All of this is extracted through lightweight parsing of the actual source (IDLs, <code>#[derive(Accounts)]</code> blocks, attributes, PDA seeds, memory directives). That’s nice to keep it open while auditing: it is a quick way to maintain context when pivoting between instructions, signers, PDAs, SPL wiring, and allocations.</p> 
+<h2 id="section-4">Example: reading a table with multiple signers<!-- notionvc: a93a4311-3c04-4b67-84a5-181cff6ada3e --></h2> 
+<p>Below is an example focused on the <code>fanout</code> program, <span data-token-index="3">(collected from the Helium protocol, an open source solana project)</span>, where one instruction uses two signers. This is taken from a real run; the names are representative of typical patterns.</p> 
+<img alt="" height="609" loading="lazy" src="image-04.png" width="1024"/> 
+<p>Let’s see the <code>stake_v0</code> instruction, this row is doing several things at once. Recap shows two signers, <code>payer</code> and <code>staker</code>, it immediately suggest that the instruction depends on two separate authorities. That usually means one party funds the action while the other authorizes it, so it becomes natural to check how each signer is used inside the handler and which parts of the logic each one gates.</p>
+<p>The <strong>Writable</strong> accounts include several SPL token and metadata accounts. Writable SPL accounts usually imply token transfers, balance updates, or metadata changes, so their presence signals where the state transitions and external effects likely occur.</p>
+<p>The <strong>Constrained</strong> column shows a mix of <code>has_one</code>, SPL-derived constraints, and a custom predicate on <code>mint</code>. This combination hints that the instruction wants to tightly bind its token accounts and metadata accounts to a specific state object. For example, <code>fanout(has_one)</code> links the stake action back to a particular <code>fanout</code> instance, while SPL constraints ensure that token accounts actually correspond to the expected mint or authority. The extra <code>constraint</code> on <code>mint</code> suggests some domain-specific rule layered on top.</p>
+<p>The <strong>Seeded</strong> column contains several PDA accounts: <code>voucher</code>, various metadata PDAs, and collection-related PDAs. Seeing multiple PDAs prompts a quick look at the seeds used throughout the program, checking whether they remain consistent and whether any of them could be influenced by caller input in a way that shifts authority or signer derivation.</p>
+<p>Finally, <strong>Memory</strong> reports <code>voucher(space)</code>, meaning the account is created with an explicit size. Any explicit <code>space = …</code> usually leads to checking who’s allowed to initialize or resize that account and whether its size depends on untrusted parameters.</p>
+<p>Taken together, the <code>stake_v0</code> row outlines the core structure of the instruction: dual authorities, several writable token paths, binding constraints, a cluster of PDAs, and explicit memory allocation. Without looking at the Rust yet, you already get a rough map of where the sensitive logic sits and which relationships deserve a closer read in the handler.</p>
+<p><!-- notionvc: 73d81c95-2ac2-415d-ab78-7402277d5392 --></p>
+<p>If you prefer to see the exact kind of definition Recap consumes, here is a representative Anchor snippet for <strong>only</strong> the <code>stake_v0</code> instruction:</p> <pre data-language="rust"><code>/// Stake an amount of membership tokens and receive a receipt NFT
+#[derive(Accounts)]
+#[instruction(args: StakeArgsV0)]
+pub struct StakeV0 {
+  #[account(mut)]
+  pub payer: Signer,
+  pub staker: Signer,
+  /// CHECK: Just needed to receive nft
+  pub recipient: AccountInfo,
+
+  #[account(
+    mut,
+    has_one = membership_mint,
+    has_one = token_account,
+    has_one = membership_collection
+  )]
+  pub fanout: Box&lt;Account&gt;,
+  pub membership_mint: Box&lt;Account&gt;,
+  pub token_account: Box&lt;Account&gt;,
+  pub membership_collection: Box&lt;Account&gt;,
+  /// CHECK: Handled by cpi
+  #[account(
+    mut,
+    seeds = ["metadata".as_bytes(), token_metadata_program.key().as_ref(), membership_collection.key().as_ref()],
+    seeds::program = token_metadata_program.key(),
+    bump,
+  )]
+  pub collection_metadata: UncheckedAccount,
+  /// CHECK: Handled By cpi account
+  #[account(
+    seeds = ["metadata".as_bytes(), token_metadata_program.key().as_ref(), membership_collection.key().as_ref(), "edition".as_bytes()],
+    seeds::program = token_metadata_program.key(),
+    bump,
+  )]
+  pub collection_master_edition: UncheckedAccount,
+
+  #[account(
+    mut,
+    associated_token::mint = membership_mint,
+    associated_token::authority = staker,
+  )]
+  pub from_account: Box&lt;Account&gt;,
+  #[account(
+    init_if_needed,
+    payer = payer,
+    associated_token::mint = membership_mint,
+    associated_token::authority = voucher,
+  )]
+  pub stake_account: Box&lt;Account&gt;,
+
+  #[account(
+    init_if_needed,
+    payer = payer,
+    associated_token::mint = mint,
+    associated_token::authority = recipient,
+  )]
+  pub receipt_account: Box&lt;Account&gt;,
+
+  #[account(
+    init,
+    payer = payer,
+    space = 60 + 8 + std::mem::size_of::() + 1,
+    seeds = ["fanout_voucher".as_bytes(), mint.key().as_ref()],
+    bump,
+  )]
+  pub voucher: Box&lt;Account&gt;,
+
+  #[account(
+    mut,
+    constraint = mint.supply == 0,
+    mint::decimals = 0,
+    mint::authority = voucher,
+    mint::freeze_authority = voucher,
+  )]
+  pub mint: Box&lt;Account&gt;,
+
+  #[account(
+    mut,
+    seeds = ["metadata".as_bytes(), token_metadata_program.key().as_ref(), mint.key().as_ref()],
+    seeds::program = token_metadata_program.key(),
+    bump,
+  )]
+  /// CHECK: Checked by cpi
+  pub metadata: UncheckedAccount,
+  /// CHECK: Handled by cpi
+  #[account(
+    mut,
+    seeds = ["metadata".as_bytes(), token_metadata_program.key().as_ref(), mint.key().as_ref(), "edition".as_bytes()],
+    seeds::program = token_metadata_program.key(),
+    bump,
+  )]
+  pub master_edition: UncheckedAccount,
+
+  pub token_program: Program,
+  pub associated_token_program: Program,
+  pub system_program: Program,
+  pub token_metadata_program: Program,
+}</code></pre>
+<img alt="" height="643" loading="lazy" src="image-05.png" width="500"/> 
+<p><span data-token-index="0"><span>Note</span>: Recap is not a replacement for reading this struct or the handler logic. It just turns the parts you repeatedly need—signers, writables, bindings, PDAs, memory decisions—into a single row you can keep in view while you audit. You still do full instruction-level analysis; the table just reduces the amount of scrolling and re-parsing required to keep the big picture in your head. Of course, it also helps surface early “quick-win” candidates: rows where writable state appears with weak or no attribute-level bindings (no seeds, no </span><code>has_one</code><span>, no SPL authority ties, no signers) stand out immediately and often justify a first pass before diving into deeper control-flow analysis.</span></p> 
+<h2 id="section-5">Technical architecture details</h2> 
+<p>Recap is Anchor-first. It begins by verifying the target root contains <code>Anchor.toml</code>. It then discovers IDLs under <code>target/idl/</code> and parses them, flattening nested account groups to leaf accounts and normalizing flags across Anchor versions so <code>isSigner</code> and <code>signer</code> are treated the same, and similarly for <code>isMut</code> and <code>writable</code>.</p><p>To pair an IDL with its source, Recap searches the workspace for crates that depend on <code>anchor-lang</code>. If the package name matches the IDL name, it uses that crate. Otherwise it computes instruction overlap: it scans the crate’s <code>src/*.rs</code> files for functions that take a <code>Context&lt;…&gt;</code> parameter and compares those function names with the IDL’s instruction names, picking the crate with the largest overlap. The scan looks for <code>Context&lt;…&gt;</code> anywhere in the parameter list and extracts the last top-level generic as the Accounts struct type. This handles common patterns like <code>Context&lt;Foo&gt;</code> as well as the verbose <code>Context&lt;‘_, ‘_, ‘_, ‘info, Foo&lt;‘info&gt;&gt;</code>.</p><p>Once the crate is chosen, Recap performs lightweight parsing on the concatenated <code>src/*.rs</code> strings. It finds <code>#[derive(Accounts)]</code> structs and, for each field, reads stacked <code>#[account(…)]</code> attributes exactly as written. Inside those attributes, it tags the presence of <code>has_one</code>, <code>address</code>, <code>owner</code>, <code>constraint</code>, SPL shorthands for token, mint, and associated token wiring, <code>seeds = [ … ]</code>, and memory markers <code>space</code>, <code>realloc</code>, and <code>realloc::zero</code>. It then correlates those fields back to the IDL so that a constraint only appears in the report if the field is actually an account for that instruction. Finally, it renders the table and writes <code>recap-solazy.md</code>. Nothing is inferred beyond the presence of those markers; if a row shows “—” under Constrained or Seeded, it means Recap did not find those markers in the source for that account and instruction.</p><p><!-- notionvc: b9cb549b-2419-42a2-a50d-ac5b8870a3eb --></p><p>The CLI surface is deliberately small. Running <code>cargo run — recap</code> (or if you use a compiled binary under “solazy” that’s just <code>solazy recap</code>) analyzes the current directory and writes <code>recap-solazy.md</code>. Passing <code>-d &lt;directory path&gt;</code> analyzes another root but still writes the report to the current directory.</p> <pre data-language="bash"><code># analyze current directory -&gt; writes ./recap-solazy.md
+cargo run -- recap
+
+# analyze a given path -&gt; writes ./recap-solazy.md
+cargo run -- recap -d ../my-solana-project</code></pre>
+<p><span data-token-index="0">Note:</span><span data-token-index="1"> Recap uses lightweight parsing rather than a full Rust compiler pipeline. It flattens the project’s .rs files and extracts attributes directly from the source. This approach keeps the tool fast and works well for standard Anchor patterns, including SPL shorthand. It is not intended to interpret custom macros or evaluate expressions hidden behind user-defined helpers, so highly unconventional setups may require a quick manual check.</span><!-- notionvc: edef62e5-3b77-4817-b8c2-227fec31e809 --></p> 
+<h2 id="section-6">Conclusion</h2> 
+<p>Recap formalizes the reconnaissance phase of an Anchor audit. It extracts signer and mutability flags from the IDL, parses the bindings and seeds from the <code>#[account(…)]</code> attributes, highlights where memory is allocated or adjusted, and consolidates everything into a single Markdown report. The output stays deliberately factual: no interpretation, no heuristics, just the declarations already present in the program. For reviewers, this reduces the initial triage step dramatically. For developers, it offers a quick way to validate that writable accounts are properly bound, PDAs are clearly derived, and memory changes are rights.</p><p><!-- notionvc: eaebebb2-711a-4a71-91f3-a041d0d8619b --></p><p>Run it with <code>cargo run — recap</code> (or provide <code>-d &lt;dirpath&gt;</code> to target another directory), then open <code>recap-solazy.md</code>. A practical starting point is to look for writable accounts without corresponding <code>has_one</code>, <code>address</code>, or <code>seeds</code> entries. From there, dive into the instruction handlers and CPIs to understand the intended control flow. The report doesn’t replace a full audit, but it gets you oriented far faster.</p> 
+<img alt="" height="500" loading="lazy" src="image-06.png" width="500"/> 

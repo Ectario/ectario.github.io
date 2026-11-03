@@ -1,0 +1,322 @@
+<p id="1b0abf8f-ab95-8004-8554-dc9eeec8363d">From the <code>server.py</code>:</p><pre data-language="python"><code>#!/usr/bin/env python3
+from flag import FLAG
+import json
+import secrets
+
+n = 512
+q = 0x10001
+g = secrets.randbits(64)
+MAX_REQUESTS = 1024
+
+
+def product(A, B):
+    """
+    Computes the product of:
+    - Matrix x Matrix
+    - Matrix x Vector
+    - Vector x Vector (dot product)
+
+    :param A: List of lists (matrix) or a simple list (vector)
+    :param B: List of lists (matrix) or a simple list (vector)
+    :return: The product result as a list or a scalar
+    """
+
+    # Case 1: Vector × Vector -&gt; Dot product
+    if isinstance(A[0], (int, float)) and isinstance(B[0], (int, float)):
+        if len(A) != len(B):
+            raise ValueError("Both vectors must have the same size")
+        return sum(a * b for a, b in zip(A, B))
+
+    # Case 2: Matrix × Vector
+    if isinstance(A[0], list) and isinstance(B[0], (int, float)):
+        if len(A[0]) != len(B):
+            raise ValueError("The number of columns in A must match the size of B")
+        return [sum(A[i][j] * B[j] for j in range(len(B))) for i in range(len(A))]
+
+    # Case 3: Matrix × Matrix
+    if isinstance(A[0], list) and isinstance(B[0], list):
+        if len(A[0]) != len(B):
+            raise ValueError(
+                "The number of columns in A must match the number of rows in B"
+            )
+
+        m, n = len(A), len(A[0])
+        p = len(B[0])
+
+        result = [[0] * p for _ in range(m)]
+        for i in range(m):
+            for j in range(p):
+                for k in range(n):
+                    result[i][j] += A[i][k] * B[k][j]
+        return result
+
+    raise ValueError("Invalid inputs, A and B must be lists or lists of lists")
+
+
+class LearningWeirdStreamCipherLikeWithErrors_____WhatTheFuckThisClassNameIsWayyyyyyTooLongLolz:
+    def __init__(self, challenge, flag):
+        self.S = [secrets.randbelow(q) for _ in range(n)]
+        self.challenge = challenge
+        self.FLAG = flag
+        stream = []
+        while len(stream) &lt; n:
+            k = secrets.randbits(2 * n)
+            stream = [g &lt;&lt; i for i in range(len(bin(k)[2:]))]
+            k_binary = bin(k)[2:]
+            deleted = 0
+            for i in range(1, len(k_binary)):
+                k_i = k_binary[i]
+                if not int(k_i):
+                    del stream[i - deleted]
+                    deleted += 1
+        self.stream = stream
+        self.leaks = 0
+
+    def get_leak(self, index, e=secrets.randbelow(q)):
+        if index &lt; 0 or index &gt;= len(self.stream):
+            return {"error": "Invalid index"}
+        if not self.leaks+1 &lt; MAX_REQUESTS:
+            return {"error": "Too much requests"}
+
+        A = [secrets.randbelow(q) for _ in range(n)]
+        B = product(A, self.S) + (self.stream[index] + e) * q
+        self.leaks += 1
+        return {"A": A, "B": str(B)}
+
+    def get_encrypted_challenge(self):
+        binary_challenge = list(
+            map(
+                int,
+                " ".join(
+                    bin(int.from_bytes(self.challenge, byteorder="big"))[2:]
+                ).split(" "),
+            )
+        )
+        encrypted_challenge = product(
+            binary_challenge, self.stream[: len(binary_challenge)]
+        )
+        return {"value": hex(encrypted_challenge)[2:]}
+
+    def get_flag(self, challenge_guess):
+        if challenge_guess == self.challenge:
+            return {"success": self.FLAG}
+        return {"fail": "hmmmmm"}
+
+
+def main():
+    challenge = secrets.token_bytes(64)
+    challenge_instance = LearningWeirdStreamCipherLikeWithErrors_____WhatTheFuckThisClassNameIsWayyyyyyTooLongLolz(
+        challenge, FLAG
+    )
+    print("Welcome to the LWSCLWE Challenge!")
+
+    while True:
+        try:
+            command = json.loads(input("Enter your command in JSON format: "))
+            if "action" not in command:
+                print(json.dumps({"error": "Invalid command format."}))
+                continue
+
+            action = command["action"]
+
+            if action == "get_leak":
+                if "index" not in command:
+                    print(json.dumps({"error": "Missing index"}))
+                else:
+                    print(
+                        json.dumps(challenge_instance.get_leak(int(command["index"])))
+                    )
+
+            elif action == "get_encrypted_challenge":
+                print(json.dumps(challenge_instance.get_encrypted_challenge()))
+
+            elif action == "get_flag":
+                if "challenge_guess" not in command:
+                    print(json.dumps({"error": "Invalid command format."}))
+                else:
+                    challenge_guess = bytes.fromhex(command["challenge_guess"])
+                    print(json.dumps(challenge_instance.get_flag(challenge_guess)))
+
+            elif action == "exit":
+                print(json.dumps({"status": "Goodbye!"}))
+                break
+
+            else:
+                print(json.dumps({"error": "Unknown action."}))
+        except Exception as e:
+            print(json.dumps({"error": str(e)}))
+
+
+if __name__ == "__main__":
+    main()
+</code></pre><hr/><h2 id="1b0abf8f-ab95-8038-9ef6-c2d193a7eacf">Known Infos </h2><hr/><h3 id="1b0abf8f-ab95-802e-a6f5-c91da58aefbc">Information from the <code>server.py</code></h3><pre data-language="python"><code>n = 512
+q = 0x10001
+g = secrets.randbits(64)
+MAX_REQUESTS = 1024</code></pre><h3 id="1b0abf8f-ab95-80dd-8ae0-e4b4a26bc679">How to Interact</h3><p id="1b0abf8f-ab95-8065-aba1-f7b9b97a97d4">The challenge operates through a simple JSON-based command interface. You send JSON-formatted requests to interact with the system, and it responds with JSON output.</p><h3 id="1b0abf8f-ab95-8095-9bb7-ebf2749b5ea2">Available Actions</h3><p id="1b0abf8f-ab95-80c4-a714-e4177ded27bf"><strong><u>1. </u></strong><code><strong><u>get_leak</u></strong></code></p><p id="1b0abf8f-ab95-8069-bc03-cd0e780380bb">This action provides a leak of the internal system based on an indexed stream value. The response includes a matrix <code>A</code> and a corresponding computed value <code>B</code>.</p><p id="1b0abf8f-ab95-8014-929a-d96b8438c117"><strong>Input Format:</strong></p><pre data-language="json"><code>{"action": "get_leak", "index": 10}</code></pre><p id="1b0abf8f-ab95-8009-a0c5-f13a6c0f6f5d"><strong>Response Format:</strong></p><pre data-language="json"><code>{"A": [random values], "B": "some computed value"}</code></pre><p id="1b0abf8f-ab95-8063-81a8-cf56a79e2a22"><strong><u>2. </u></strong><code><strong><u>get_encrypted_challenge</u></strong></code></p><p id="1b0abf8f-ab95-8009-be6b-cf7768ad7a46">This action retrieves an encrypted form of a challenge value that you will need to decrypt in order to obtain the flag.</p><p id="1b0abf8f-ab95-80fc-9254-dd9712d15d8a"><strong>Input Format:</strong></p><pre data-language="json"><code>{"action": "get_encrypted_challenge"}</code></pre><p id="1b0abf8f-ab95-8012-be23-f884ea57ee4f"><strong>Response Format:</strong></p><pre data-language="json"><code>{"value": "encrypted hex value"}</code></pre><p id="1b0abf8f-ab95-80d0-9c54-de45dbe25c13"><strong><u>3. </u></strong><code><strong><u>get_flag</u></strong></code></p><p id="1b0abf8f-ab95-8002-afdf-d47e6508a0c1">If you believe you have successfully decrypted the challenge, you can submit your guess to retrieve the flag.</p><p id="1b0abf8f-ab95-80ee-b641-f64492beca09"><strong>Input Format:</strong></p><pre data-language="json"><code>{"action": "get_flag", "challenge_guess": "your hex-encoded guess"}</code></pre><p id="1b0abf8f-ab95-806e-ae3e-c38b7137345c"><strong>Response Format (if correct):</strong></p><pre data-language="json"><code>{"success": "flag{your_flag_here}"}</code></pre><p id="1b0abf8f-ab95-8070-b109-ff7ffd41af3c"><strong>Response Format (if incorrect):</strong></p><pre data-language="json"><code>{"fail": "hmmmmm"}</code></pre><p id="1b0abf8f-ab95-80d3-8fda-c60c8f157570"><strong><u>4. </u></strong><code><strong><u>exit</u></strong></code></p><p id="1b0abf8f-ab95-803d-a2f0-e627c4fd7e8d">This action gracefully exits the challenge.</p><p id="1b0abf8f-ab95-8016-a1b8-ea30012599d1"><strong>Input Format:</strong></p><pre data-language="json"><code>{"action": "exit"}</code></pre><p id="1b0abf8f-ab95-8069-b49f-fc2afb6df321"><strong>Response Format:</strong></p><pre data-language="json"><code>{"status": "Goodbye!"}</code></pre><h2 id="1b0abf8f-ab95-804c-8a92-d371d12b60b4">Objective</h2><hr/><p id="1b0abf8f-ab95-8072-a97c-e9dc44e5e75e">The <strong>LWSCLWE </strong>Challenge presents a cryptographic system that leaks information about an internal secret through matrix operations (that kinda looks like LWE). </p><p id="1b0abf8f-ab95-803b-88ac-dfd1af212d4c">The goal seems to be to analyze the leaks (<code>get_leak</code> results), derive the internal secret stream, and decrypt the challenge (<code>get_encrypted_challenge</code>). If you can correctly reconstruct the challenge, submit it using <code>get_flag</code> to retrieve the final flag.</p><h2 id="1b0abf8f-ab95-80b9-8915-efcd0072190f">Analyse</h2><hr/><h3 id="1b1abf8f-ab95-80b6-a5b4-d72402e5c0fa">Recovering the secret value S</h3><p id="1b1abf8f-ab95-80d9-9a75-e8aef579f873">In <code>get_leak</code>:</p><pre data-language="python"><code>    def get_leak(self, index, e=secrets.randbelow(q)):
+        if index &lt; 0 or index &gt;= len(self.stream):
+            return {"error": "Invalid index"}
+        if not self.leaks+1 &lt; MAX_REQUESTS:
+            return {"error": "Too much requests"}
+
+        A = [secrets.randbelow(q) for _ in range(n)]
+        B = product(A, self.S) + (self.stream[index] + e) * q
+        self.leaks += 1
+        return {"A": A, "B": str(B)}</code></pre><p id="1b1abf8f-ab95-809a-a9fd-cafdd393217b">This function resembles the Learning With Errors (LWE) problem, where an unknown secret <code>S</code> is hidden within noisy linear equations. Here, the function generates a random vector <code>A</code>, computes <code>B</code> using a dot product with the secret <code>S</code>, and adds noise scaled by <code>q</code> to obscure the stream value. </p><p id="1b1abf8f-ab95-800c-a6db-fd55c5665e71">So:</p><span data-latex="block">B = \langle A, S \rangle + (\text{stream}[i] + e) \cdot q</span><p id="1b1abf8f-ab95-806a-b5a8-fb86b070a434">This scheme allows us to forge 512 independent equations by requesting leaks with different values of <code>A</code>. If we switch to an appropriate modulus (working in <span data-latex="inline">\mathbb{F}_q)</span>, we can eliminate the unknown term <span data-latex="inline">(\text{stream}[i] + e) \cdot q</span>, reducing the equation to:</p><span data-latex="block">B \mod q = \langle A, S \rangle \mod q</span><p id="1b1abf8f-ab95-800e-a80d-d5e12741a9a9"><u>This will results in a system of 512 linear equations with 512 unknowns (the components of </u><code><u>S</u></code><u>), which can be solved efficiently using standard linear algebra techniques such as Gaussian elimination.</u></p><span data-latex="block">\begin{cases}
+\langle A_1, S \rangle \equiv B_1 \mod q \\
+\langle A_2, S \rangle \equiv B_2 \mod q \\
+\vdots \\
+\langle A_{512}, S \rangle \equiv B_{512} \mod q
+\end{cases}</span><p id="1b1abf8f-ab95-80b0-b1e9-ce9e8427ad90">And so:</p><span data-latex="block">\begin{bmatrix}
+A_{1,1} &amp; A_{1,2} &amp; \dots &amp; A_{1,512} \\
+A_{2,1} &amp; A_{2,2} &amp; \dots &amp; A_{2,512} \\
+\vdots &amp; \vdots &amp; \ddots &amp; \vdots \\
+A_{512,1} &amp; A_{512,2} &amp; \dots &amp; A_{512,512}
+\end{bmatrix}
+\cdot
+\begin{bmatrix}
+S_1 \\
+S_2 \\
+\vdots \\
+S_{512}
+\end{bmatrix}
+\equiv
+\begin{bmatrix}
+B_1 \\
+B_2 \\
+\vdots \\
+B_{512}
+\end{bmatrix}
+\mod q</span><span data-latex="block">⇒ S \equiv A^{-1} B \mod q</span><p id="1b1abf8f-ab95-80b5-a357-f6c282be90b8">Now, the next step is to successfully recover the <code>stream</code>. To do this, we need to understand how it was created in order to analyze its structure.</p><p id="1b1abf8f-ab95-80eb-a4a6-e41b57e945c0">It is also <u>important</u> to note that the noise term <code>e</code> is only generated <strong><u>once</u></strong>, during the first execution of the function, and remains fixed for subsequent calls. Also, <code>e</code> is brute-forceable since it is <code>&lt; q</code> and <code>q = 0x10001</code>.</p><h3 id="1b0abf8f-ab95-80ae-9ec4-d51ee118fd3c">Stream Initialization</h3><p id="1b0abf8f-ab95-8046-bd32-ec367f0cfdc5">In <code>__init__</code> :</p><pre data-language="python"><code>  	def __init__(self, challenge, flag):
+        self.S = [secrets.randbelow(q) for _ in range(n)]
+        self.challenge = challenge
+        self.FLAG = flag
+        stream = []
+        while len(stream) &lt; n:
+            k = secrets.randbits(2 * n)
+            stream = [g &lt;&lt; i for i in range(len(bin(k)[2:]))]
+            k_binary = bin(k)[2:]
+            deleted = 0
+            for i in range(1, len(k_binary)):
+                k_i = k_binary[i]
+                if not int(k_i):
+                    del stream[i - deleted]
+                    deleted += 1
+        self.stream = stream
+        self.leaks = 0</code></pre><p id="1b0abf8f-ab95-804f-9516-c3fa47dea726">The code generates a sequence called <code>stream</code>, which serves as a <strong>random basis</strong> while ensuring it is <strong>super-increasing </strong><em><strong>(that is really important to note)</strong></em>. The process involves:</p><ol><li id="1b0abf8f-ab95-8099-b567-c22cc160e433">Initializing an empty list <code>stream</code>.</li><li id="1b0abf8f-ab95-8088-8991-fddc19c28022">Generating a random integer <code>k</code> with <code>2 * n</code> bits.</li><li id="1b0abf8f-ab95-80c7-aca0-ddac58da0a4b">Constructing an initial sequence by left-shifting a base value <code>g</code> according to the positions of the bits in <code>k</code>.</li><li id="1b0abf8f-ab95-8015-8883-e885c21ae82d">Filtering out elements corresponding to zero bits in the binary representation of <code>k</code>.</li><li id="1b0abf8f-ab95-80c1-8076-c405affea492">Assigning the final sequence to <code>self.stream</code>.</li></ol><p id="1b0abf8f-ab95-8011-9f14-e30fb0cb7c6d">Since the sequence construction is directly based on bit positions, it retains an inherent <strong>order</strong>. The filtering step ensures that the resulting sequence remains sparse while preserving the increasing nature of its elements.</p><h3 id="1b0abf8f-ab95-8024-9c19-d6ac42a36499">Lil’ answer for this one: Why the sequence is super-increasing?</h3><p id="1b0abf8f-ab95-80e8-9fe8-d9726864e84b">A sequence <span data-latex="inline">\{s_1, s_2, ..., s_n\}</span> is <strong>super-increasing</strong> if:</p><span data-latex="block">s_i &gt; \sum_{j=1}^{i-1} s_j, \quad \forall i \geq 2</span><p id="1b0abf8f-ab95-80b7-94d2-fb8ca8a7458e"><strong>Step 1: Constructing the Sequence</strong></p><ul><li id="1b0abf8f-ab95-809c-b5e5-ca55a14b0aa3">Let <span data-latex="inline">k</span> be a randomly generated integer with up to <span data-latex="inline">2^n</span> bits.</li><li id="1b0abf8f-ab95-8041-8c81-cf51dc5221c2">The binary representation of <span data-latex="inline">k</span> is parsed, and an initial sequence is formed using <strong>left shifts</strong> of a base value <span data-latex="inline">g</span>:<span data-latex="block">s_i = g \cdot 2^i, \quad \text{where } i \text{ corresponds to the bit positions of } k</span></li><li id="1b0abf8f-ab95-80c4-884a-ecc1d913c84c">Any bit set to zero results in the removal of the corresponding term from <code>stream</code>.</li></ul><p id="1b0abf8f-ab95-805a-abe7-d8d46a44b4e3"><strong>Step 2: The nature of the Super-Increasing Property</strong></p><ul><li id="1b0abf8f-ab95-8006-9a12-db763b62e535">Consider any two consecutive elements in the sequence, say:</li></ul><span data-latex="block">s_1, s_2, \dots, s_m</span><p id="1b0abf8f-ab95-8078-8a6f-ff68180a2ba9"><em>where </em><em><span data-latex="inline"> s_i = g \cdot 2^{b_i}  </span></em><em> for strictly increasing indices </em><em><span data-latex="inline">b_1 &lt; b_2 &lt; \dots &lt; b_m</span></em><em>.</em></p><ul><li id="1b0abf8f-ab95-80e0-8731-f81c7543096e">By definition of left shifts we have:<span data-latex="block">s_i = g \cdot 2^{b_i}</span><p id="1b0abf8f-ab95-80fe-b08e-fe1ad07e2793">Also:</p><span data-latex="block">2^{b_{i+1}} = 2 \cdot 2^{b_i}</span><span data-latex="block">g \cdot 2^{b_{i+1}} = g \cdot 2 \cdot 2^{b_i}</span><p id="1b0abf8f-ab95-80c4-a762-d875699580f1">And so, since <span data-latex="inline">b_{i+1} &gt; b_i</span>, implying <span data-latex="inline">2^{b_{i+1}}</span> is at least <strong>twice</strong> <span data-latex="inline">2^{b_i}</span> and same for <span data-latex="inline">g \cdot 2^{b_{i+1}} &gt; g \cdot 2^{b_{i}}</span>, the following is trivially true:</p><span data-latex="block">⇒ 2^{b_0} &lt; 2^{b_1} &lt; 2^{b_0} + 2^{b_1} &lt; 2^{b_2} &lt; 2^{b_0} + 2^{b_1} + 2^{b_2} &lt; 2^{b_3} &lt; \cdots  &lt; \sum_{j=1}^{i}2^{b_j} &lt; 2^{b_{i+1}} 
+</span><span data-latex="block">⇒ 2^{b_{i+1}} &gt; 2^{b_1} + 2^{b_2} + \dots + 2^{b_i}</span><span data-latex="block"> ⇒g \cdot 2^{b_{i+1}} &gt; g \cdot (2^{b_1} + 2^{b_2} + \dots + 2^{b_i})</span><span data-latex="block">⇒ s_{i+1} &gt; \sum_{j=1}^{i} s_j</span></li></ul><p id="1b0abf8f-ab95-8051-8b93-ca6a26fac26f"><em>(note: could be proved rigorously by induction, this is a fun exercise left to the readers)</em></p><p id="1b0abf8f-ab95-80bf-96df-ec3236b291be"><strong>Step 3: Conclusion</strong></p><p id="1b0abf8f-ab95-80e8-a36a-da8f3fb840c2">Since each element in <code>stream</code> is strictly greater than the sum of all previous elements, we can effectively conclude that:</p><span data-latex="block">\forall i \geq 2, \quad s_i &gt; \sum_{j=1}^{i-1} s_j</span><p id="1b0abf8f-ab95-807b-b52d-f040def05b8e">Thus, <code><strong>stream</strong></code><strong> is guaranteed to be a super-increasing sequence.</strong></p><p id="1b0abf8f-ab95-8041-8f2b-fe6f396d86b7">This process creates a <strong>randomized basis</strong> because <code>k</code> is randomly chosen, affecting which indices contribute to the sequence. However, the structural nature of left shifts and binary filtering <strong>guarantees</strong> that the resulting sequence remains super-increasing. </p><h3 id="1b0abf8f-ab95-8090-b206-e6dfbe54fab7">Recovering the secret value <code>stream</code> &amp; <code>challenge</code> using <code>S</code></h3><p id="1b1abf8f-ab95-8093-b0b9-f919f648f634">Since we know that the stream is <strong>super-increasing</strong> and that <code>e</code> is brute-forceable, we can simply apply the following algorithm which simply tries to find the correct <code>stream</code> by recomputing a <code>challenge</code> for each attempt and sending it to our oracle <code><strong>get_flag(challenge_guess)</strong></code>, which tells us whether it is correct or not:</p><pre data-language="python"><code>stream_plus_e = []
+
+# Here, we're just recovering the unknown: stream[index] + e 
+for i in tqdm(range(512)):
+    A, B = collected_A[i], collected_B[i]
+    stream_plus_e.append(int(B - int(np.array(A) @ S)) // q)
+    
+# We brute-force 'e' while trying to reverse the super-increasing sequence applied to the challenge
+_sum_init = int(get_encrypted_challenge()["value"], 16)
+for e in tqdm(range(q)):  # Brute-force search on 'e'
+    binary_challenge = []
+    _sum = _sum_init
+    for i in range(511, -1, -1):  # Process the stream in reverse order
+        stream_i = stream_plus_e[i] - e
+        b = 0
+        if _sum &gt;= stream_i:
+            b = 1
+            _sum -= stream_i
+        binary_challenge.append(str(b))
+        
+    # oracle stage to whether validate or not our challenge_guess
+    challenge = int("".join(binary_challenge[::-1]), 2)
+    challenge = hex(challenge)[2:]
+    if len(challenge) % 2 == 1:
+        challenge = "0" + challenge  # Pad with a leading zero if necessary
+    flag_response = get_flag(challenge)
+    if "success" in flag_response:
+        print(flag_response)
+        FOUND = True
+        break</code></pre><p id="1b1abf8f-ab95-803c-89e3-e6d848775cd4">This algorithm exploits the <strong>super-increasing</strong> property of the stream, meaning that each element is significantly larger than the sum of all previous elements. This makes it possible to reconstruct the binary sequence using <strong>greedy subtraction</strong>. Since <code>e</code> is small, brute-forcing it is computationally feasible. The main logic can be simply described as follows:</p><p id="1b1abf8f-ab95-8010-83aa-f9536c32c1f2">Starting from the last element and moving backward, there are two cases:</p><ol><li id="1b1abf8f-ab95-80d0-9b3b-c9ce2766a629"><strong>If</strong> <span data-latex="inline">\text{sum} &lt; \text{arr}[i]</span>, the element is <strong>excluded</strong> since adding it would exceed the target sum.</li><li id="1b1abf8f-ab95-8049-8295-d0fbf2689574"><strong>If</strong> <span data-latex="inline">\text{sum} \geq \text{arr}[i]</span>, the element <strong>must be included</strong>, as the remaining elements alone cannot reach the sum in a super-increasing sequence. The sum is then updated as:<span data-latex="block">\text{sum} = \text{sum} - \text{arr}[i]</span></li></ol><p id="1b1abf8f-ab95-80b5-a1cb-f6cb99c871e5">From this point, once the challenge is correct, we immediately <u>Capture The Flag.</u></p><h2 id="1b1abf8f-ab95-8077-a6f8-c423944292ad">Final Exploit</h2><p id="1b1abf8f-ab95-80dd-9840-caff477797c9"><em>Sometimes, the script doesn't work on the first try and requires a few attempts.</em></p><pre data-language="python"><code>from sage.all import *
+from pwn import process, remote
+import numpy as np
+from json import loads, dumps
+from tqdm import tqdm
+
+HOST = "localhost"
+PORT = 32770
+
+
+def get_leak(index):
+    proc.sendline(dumps({"action": "get_leak", "index": str(index)}))
+    res = proc.recvline()
+    clean()
+    return loads(res)
+
+
+def get_flag(challenge_guess):
+    proc.sendline(dumps({"action": "get_flag", "challenge_guess": challenge_guess}))
+    res = proc.recvline()
+    clean()
+    return loads(res)
+
+
+def get_encrypted_challenge():
+    proc.sendline(dumps({"action": "get_encrypted_challenge"}))
+    res = proc.recvline()
+    clean()
+    return loads(res)
+
+
+def clean():
+    return proc.recvuntil(b"format: ")
+
+n = 512
+q = 0x10001
+MAX_REQUESTS = 512
+
+Fq = FiniteField(q)
+FOUND = False
+
+while not FOUND:
+    # proc = process("./server.py")
+    proc = remote(HOST, PORT)
+    print(clean())
+
+    collected_A = []
+    collected_B = []
+
+    for i in tqdm(range(512)):
+        R = get_leak(i)
+        collected_A.append(list(map(int, R["A"])))
+        collected_B.append(
+            int(R["B"])
+        )  
+
+    Amat = Matrix(Fq, collected_A) # being in Fq, so it cancels (self.stream[index] + e) * q
+    Bvec = vector(Fq, collected_B) # being in Fq, so it cancels (self.stream[index] + e) * q
+    S = list(map(int, Amat.solve_right(Bvec)))
+
+    stream_plus_e = []
+
+    for i in tqdm(range(512)):
+        A, B = collected_A[i], collected_B[i]
+        stream_plus_e.append(int(B - int(np.array(A) @ S)) // q)
+
+    # we bruteforce 'e' while trying to reverse the super increasing sequence applied to the challenge
+    _sum_init = int(get_encrypted_challenge()["value"], 16)
+    for e in tqdm(range(q)):
+        binary_challenge = []
+        _sum = _sum_init
+        for i in range(511, -1, -1):
+            stream_i = stream_plus_e[i] - e
+            b = 0
+            if _sum &gt;= stream_i:
+                b = 1
+                _sum -= stream_i
+            binary_challenge.append(str(b))
+        challenge = int("".join(binary_challenge[::-1]), 2)
+        challenge = hex(challenge)[2:]
+        if len(challenge) % 2 == 1:
+            challenge = "0" + challenge  # Pad with a leading zero if necessary
+        flag_response = get_flag(challenge)
+        if "success" in flag_response:
+            print(flag_response)
+            FOUND = True
+            break
+    proc.close()</code></pre>

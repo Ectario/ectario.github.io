@@ -1,0 +1,27 @@
+                                                               2024-09-18
+
+3 How to solve
+3.1 Recovering 𝑠
+
+To solve this challenge, we need to reverse the process:
+
+
+1. The ﬁrst step is to recover 𝑠 modulo 𝑝, 𝑞, and 𝑟. These values are given
+as F1(s), F2(s), and F3(s) in the output.
+
+
+2. Since 𝑝, 𝑞, and 𝑟 are prime and co-prime, we can apply the Chinese
+Remainder Theorem to reconstruct 𝑠 modulo 𝑝 ∗ 𝑞 ∗ 𝑟. This works because
+the values of 𝑃 [0], 𝑄[0], and 𝑅[0] are smaller than their respective ﬁeld
+moduli, ensuring that 𝑠 is fully recoverable.
+
+
+3. Once we have 𝑠, we add 𝑅[0] to match the value before the XOR oper-
+ation, and then XOR the result with the value stored in s XOR flag to
+recover the ﬂag.
+
+
+
+
+                                                                   Ectario
+                                   5/8

@@ -1,0 +1,49 @@
+                                                         2024-09-18
+
+3.2 Solve script
+
+from sage.all import *
+from Crypto.Util.number import long_to_bytes, inverse, bytes_to_long
+from random import randrange
+
+p = 2^222 - 117
+F = FiniteField(p)
+E = EllipticCurve(F, [0, 1, 0, 1, 3])
+
+assert E.order().is_prime()
+
+outputs = open("output.txt", "r").readlines()
+ciphered = [int(x.split(": ")[1]) for x in outputs]
+added = [int(a.split(": ")[0]) for a in outputs]
+
+mask = 0x1fffffffffffff
+
+# # Perform discrete log to recover r using known part of the flag
+xP = bytes_to_long(b"3") + added[0]
+unmasked_x = F(ciphered[0]^mask)
+unmasked_Q = E.lift_x(unmasked_x)
+r2 = discrete_log(unmasked_Q, E.lift_x(F(xP)), operation="+")
+
+# Brute-force method to recover r and reconstruct the flag
+for r in range(1, p):
+    flag = b""
+    try:
+        for i, x in enumerate(ciphered):
+            unmasked_x = F(x^mask)
+            unmasked_Q = E.lift_x(unmasked_x)
+            r_inv = inverse(r, E.order())
+            P = F(r_inv) * unmasked_Q
+            x_value = F(P[0]) if F(P[0]) > 40 else int(P[0]) + p
+            flag += long_to_bytes(int(x_value) - int(F(added[i])))
+        if b"}" in flag:
+            # Verify that both methods give the same result
+            assert r == r2
+            print(flag)
+            exit()
+    except ZeroDivisionError:
+        continue
+
+                     ——————————-
+
+                                                             Ectario
+                               6/8

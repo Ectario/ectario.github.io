@@ -1,0 +1,27 @@
+                                                               2024-09-18
+
+2 Analyse
+
+2.1 Key Points
+
+1. Three Strong Primes: The primes 𝑝, 𝑞, and 𝑟 used to deﬁne the ﬁnite
+ﬁelds are strong primes chosen from secure cryptographic sources. These
+primes are also pairwise co-prime, which is important for the next step in
+solving the challenge using the Chinese Remainder Theorem (CRT).
+
+
+2. CRT Application: Since 𝑝, 𝑞, and 𝑟 are pairwise co-prime, we can
+apply the Chinese Remainder Theorem to reconstruct 𝑠 modulo 𝑝 ∗ 𝑞 ∗ 𝑟.
+This property allows us to uniquely determine 𝑠 because the product 𝑃 [0] ∗
+𝑄[0] ∗ 𝑅[0] will be smaller than 𝑝 ∗ 𝑞 ∗ 𝑟, making 𝑠 recoverable.
+
+
+3. XOR Masking: The script adds 𝑅[0] to 𝑠 and then XORs the result
+with the ﬂag. Once 𝑠 is recovered, reversing the XOR operation will allow
+us to recover the original ﬂag.
+
+
+
+
+                                                                   Ectario
+                                  4/8

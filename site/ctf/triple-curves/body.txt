@@ -1,0 +1,137 @@
+<p>From the <code>chall.py</code>:</p>
+<pre data-language="python"><code>from Crypto.Util.number import *
+from flag import FLAG
+
+FLAG = bytes_to_long(FLAG)
+
+p = 2^222 - 117 # strong prime from https://safecurves.cr.yp.to/
+F1 = FiniteField(p)
+E1 = EllipticCurve(F1, [0, 1, 0, 1, 3]) 
+
+q  = 2^221 - 3 # strong prime from https://safecurves.cr.yp.to/
+F2 = FiniteField(q)
+E2 = EllipticCurve(F2, [0, 1, 0, 1, 3]) 
+
+r = 2^224 - 2^96 + 1 # strong prime from https://safecurves.cr.yp.to/
+F3 = FiniteField(r)
+E3 = EllipticCurve(F3, [0, 1, 0, 1, 3]) 
+
+P = E1.random_point()
+Q = E2.random_point()
+R = E3.random_point()
+
+s = (int(P[0]) * int(Q[0]) * int(R[0]))
+
+print(f"{F1(s)=}")
+print(f"{F2(s)=}")
+print(f"{F3(s)=}")
+
+s += int(R[0])
+
+assert s &gt; FLAG
+
+print(f"s XOR flag={s ^^ FLAG}")
+print(f"{R[1]=}")</code></pre>
+<h3 id="section-1">Known infos</h3>
+<p><strong>Goal</strong>: The challenge generates three elliptic curve points <img alt="𝑃" class="pdf-inline-math" height="15.500" src="formula-03-01.svg" style="width:0.8277em;height:1.1071em" width="11.587"/>, <img alt="𝑄" class="pdf-inline-math" height="16.043" src="formula-03-02.svg" style="width:0.9167em;height:1.1459em" width="12.833"/>, and <img alt="𝑅" class="pdf-inline-math" height="15.500" src="formula-03-03.svg" style="width:0.8791em;height:1.1071em" width="12.307"/> from
+three different finite fields. The goal is to recover the flag, which has been
+XORed  with  a  masked  value <img alt="𝑠" class="pdf-inline-math" height="15.500" src="formula-03-04.svg" style="width:0.5833em;height:1.1071em" width="8.167"/>,  derived  from  the <img alt="𝑥" class="pdf-inline-math" height="15.500" src="formula-03-05.svg" style="width:0.6786em;height:1.1071em" width="9.500"/>-coordinates  of  these
+points.</p>
+<p>Informations from <code>chall.py</code>:</p>
+<pre data-language="python"><code>p = 2^222 - 117
+q = 2^221 - 3
+r = 2^224 - 2^96 + 1
+
+print(f"{F1(s)=}") # i.e. s % p
+print(f"{F2(s)=}") # i.e. s % q
+print(f"{F3(s)=}") # i.e. s % r
+
+assert s &gt; FLAG    # i.e. the xor will be a one-time pad
+
+print(f"s XOR flag={s ^^ FLAG}")
+print(f"{R[1]=}")</code></pre>
+<p>The <img alt="𝑥" class="pdf-inline-math" height="15.500" src="formula-03-06.svg" style="width:0.6786em;height:1.1071em" width="9.500"/>-coordinates of the points <img alt="𝑃" class="pdf-inline-math" height="15.500" src="formula-03-07.svg" style="width:0.8491em;height:1.1071em" width="11.887"/>, <img alt="𝑄" class="pdf-inline-math" height="15.500" src="formula-03-08.svg" style="width:0.9167em;height:1.1071em" width="12.833"/>, and <img alt="𝑅" class="pdf-inline-math" height="15.500" src="formula-03-09.svg" style="width:0.8690em;height:1.1071em" width="12.167"/> are multiplied together to
+produce <img alt="𝑠" class="pdf-inline-math" height="15.500" src="formula-03-10.svg" style="width:0.5833em;height:1.1071em" width="8.167"/>, and then masked. Our goal is to reverse this process and recover
+the original flag.</p>
+<h2 id="section-2">Analyse</h2>
+<h3 id="section-3">Key Points</h3>
+<p><strong>1. Three Strong Primes:</strong> The primes <img alt="𝑝" class="pdf-inline-math" height="15.645" src="formula-04-01.svg" style="width:0.7072em;height:1.1175em" width="9.901"/>, <img alt="𝑞" class="pdf-inline-math" height="15.645" src="formula-04-02.svg" style="width:0.5456em;height:1.1175em" width="7.638"/>, and <img alt="𝑟" class="pdf-inline-math" height="15.500" src="formula-04-03.svg" style="width:0.5397em;height:1.1071em" width="7.556"/> used to define the finite
+fields are strong primes chosen from secure cryptographic sources. These
+primes are also pairwise co-prime, which is important for the next step in
+solving the challenge using the Chinese Remainder Theorem (CRT).</p>
+<p><strong>2.  CRT  Application:</strong>  Since <img alt="𝑝" class="pdf-inline-math" height="15.598" src="formula-04-04.svg" style="width:0.6628em;height:1.1142em" width="9.280"/>, <img alt="𝑞" class="pdf-inline-math" height="15.598" src="formula-04-05.svg" style="width:0.5435em;height:1.1142em" width="7.609"/>,  and <img alt="𝑟" class="pdf-inline-math" height="15.500" src="formula-04-06.svg" style="width:0.5412em;height:1.1071em" width="7.577"/>  are  pairwise  co-prime,  we  can
+apply the Chinese Remainder Theorem to reconstruct <img alt="𝑠" class="pdf-inline-math" height="15.500" src="formula-04-07.svg" style="width:0.5833em;height:1.1071em" width="8.167"/> modulo <img alt="𝑝 ∗ 𝑞 ∗ 𝑟" class="pdf-inline-math" height="15.571" src="formula-04-08.svg" style="width:3.5104em;height:1.1122em" width="49.146"/>.
+This property allows us to uniquely determine <img alt="𝑠" class="pdf-inline-math" height="15.500" src="formula-04-09.svg" style="width:0.5833em;height:1.1071em" width="8.167"/> because the product <span class="inline-math-scroll pdf-math-sequence" tabindex="0"><img alt="𝑃 [0] ∗" class="pdf-inline-math" height="16.325" src="formula-04-10.svg" style="width:2.6786em;height:1.1661em" width="37.500"/><img alt="𝑄[0] ∗ 𝑅[0]" class="pdf-inline-math" height="16.298" src="formula-04-11.svg" style="width:4.7262em;height:1.1641em" width="66.167"/></span> will be smaller than <img alt="𝑝 ∗ 𝑞 ∗ 𝑟" class="pdf-inline-math" height="15.516" src="formula-04-12.svg" style="width:3.5179em;height:1.1083em" width="49.251"/>, making <img alt="𝑠" class="pdf-inline-math" height="15.500" src="formula-04-13.svg" style="width:0.5833em;height:1.1071em" width="8.167"/> recoverable.</p>
+<p><strong>3. XOR Masking:</strong> The script adds <img alt="𝑅[0]" class="pdf-inline-math" height="16.333" src="formula-04-14.svg" style="width:1.9643em;height:1.1666em" width="27.500"/> to <img alt="𝑠" class="pdf-inline-math" height="15.500" src="formula-04-15.svg" style="width:0.5833em;height:1.1071em" width="8.167"/> and then XORs the result
+with the flag. Once <img alt="𝑠" class="pdf-inline-math" height="15.500" src="formula-04-16.svg" style="width:0.5833em;height:1.1071em" width="8.167"/> is recovered, reversing the XOR operation will allow
+us to recover the original flag.</p>
+<h2 id="section-4">How to solve</h2>
+<h3 id="section-5">Recovering <img alt="𝑠" class="pdf-inline-math" height="18.167" src="formula-05-01.svg" style="width:0.6786em;height:1.2976em" width="9.500"/></h3>
+<p>To solve this challenge, we need to reverse the process:</p>
+<p><strong>1.</strong> The first step is to recover <img alt="𝑠" class="pdf-inline-math" height="15.500" src="formula-05-02.svg" style="width:0.5833em;height:1.1071em" width="8.167"/> modulo <img alt="𝑝" class="pdf-inline-math" height="15.601" src="formula-05-03.svg" style="width:0.6972em;height:1.1143em" width="9.761"/>, <img alt="𝑞" class="pdf-inline-math" height="15.601" src="formula-05-04.svg" style="width:0.5478em;height:1.1143em" width="7.670"/>, and <img alt="𝑟" class="pdf-inline-math" height="15.500" src="formula-05-05.svg" style="width:0.5529em;height:1.1071em" width="7.741"/>. These values are given
+as <code>F1(s)</code>, <code>F2(s)</code>, and <code>F3(s)</code> in the output.</p>
+<p><strong>2.</strong>  Since <img alt="𝑝" class="pdf-inline-math" height="15.609" src="formula-05-06.svg" style="width:0.6911em;height:1.1149em" width="9.675"/>, <img alt="𝑞" class="pdf-inline-math" height="15.609" src="formula-05-07.svg" style="width:0.5357em;height:1.1149em" width="7.500"/>,  and <img alt="𝑟" class="pdf-inline-math" height="15.500" src="formula-05-08.svg" style="width:0.5374em;height:1.1071em" width="7.524"/>  are  prime  and  co-prime,  we  can  apply  the  Chinese
+Remainder Theorem to reconstruct <img alt="𝑠" class="pdf-inline-math" height="15.500" src="formula-05-09.svg" style="width:0.5833em;height:1.1071em" width="8.167"/> modulo <img alt="𝑝 ∗ 𝑞 ∗ 𝑟" class="pdf-inline-math" height="15.581" src="formula-05-10.svg" style="width:3.4806em;height:1.1130em" width="48.729"/>. This works because
+the values of <img alt="𝑃 [0]" class="pdf-inline-math" height="16.335" src="formula-05-11.svg" style="width:1.9643em;height:1.1668em" width="27.500"/>, <img alt="𝑄[0]" class="pdf-inline-math" height="16.335" src="formula-05-12.svg" style="width:1.9643em;height:1.1668em" width="27.500"/>, and <img alt="𝑅[0]" class="pdf-inline-math" height="16.335" src="formula-05-13.svg" style="width:1.9679em;height:1.1668em" width="27.550"/> are smaller than their respective field
+moduli, ensuring that <img alt="𝑠" class="pdf-inline-math" height="15.500" src="formula-05-14.svg" style="width:0.5833em;height:1.1071em" width="8.167"/> is fully recoverable.</p>
+<p><strong>3.</strong> Once we have <img alt="𝑠" class="pdf-inline-math" height="15.500" src="formula-05-15.svg" style="width:0.5833em;height:1.1071em" width="8.167"/>, we add <img alt="𝑅[0]" class="pdf-inline-math" height="16.343" src="formula-05-16.svg" style="width:1.9643em;height:1.1674em" width="27.500"/> to match the value before the XOR operation, and then XOR the result with the value stored in <code>s  XOR  flag</code> to
+recover the flag.</p>
+<h3 id="section-6">Solve script</h3>
+<pre data-language="python"><code>from Crypto.Util.number import *
+
+p = 2^222 - 117  
+F1 = FiniteField(p)
+E1 = EllipticCurve(F1, [0, 1, 0, 1, 3]) 
+q  = 2^221 - 3
+F2 = FiniteField(q)
+E2 = EllipticCurve(F2, [0, 1, 0, 1, 3]) 
+r = 2^224 - 2^96 + 1
+F3 = FiniteField(r)
+E3 = EllipticCurve(F3, [0, 1, 0, 1, 3]) 
+
+s_xor_flag, F1_s, F2_s, F3_s, yR = None, None, None, None, None
+
+with open("output.txt", 'r') as file:
+    for line in file:
+        line = line.strip()
+        if line.startswith("s XOR flag="):
+            s_xor_flag = int(line.split("=")[1])
+        elif line.startswith("F1(s)="):
+            F1_s = int(line.split("=")[1])
+        elif line.startswith("F2(s)="):
+            F2_s = int(line.split("=")[1])
+        elif line.startswith("F3(s)="):
+            F3_s = int(line.split("=")[1])
+        elif line.startswith("R[_sage_const_1 ]="):
+            yR = int(line.split("=")[1])
+
+polR = E3.defining_polynomial()
+xRs = polR(y=yR,z=1).univariate_polynomial().roots(multiplicities=False)
+
+for x in xRs:
+    s = int(CRT([F1_s, F2_s, F3_s], [p, q ,r]))
+    s += int(x)
+    flag = long_to_bytes(s_xor_flag ^^ int(s))
+    print(flag) if b"}" in flag else ...</code></pre>
+<h3 id="section-7">Explanation</h3>
+<p><strong>Chinese  Remainder  Theorem:</strong>  By  leveraging  the  fact  that <img alt="𝑝" class="pdf-inline-math" height="16.043" src="formula-07-01.svg" style="width:0.7105em;height:1.1459em" width="9.946"/>, <img alt="𝑞" class="pdf-inline-math" height="16.043" src="formula-07-02.svg" style="width:0.5513em;height:1.1459em" width="7.719"/>,  and
+<img alt="𝑟" class="pdf-inline-math" height="15.500" src="formula-07-03.svg" style="width:0.5505em;height:1.1071em" width="7.707"/> are co-prime, we can apply the CRT to reconstruct <img alt="𝑠" class="pdf-inline-math" height="15.500" src="formula-07-04.svg" style="width:0.5833em;height:1.1071em" width="8.167"/> modulo <img alt="𝑝 ∗ 𝑞 ∗ 𝑟" class="pdf-inline-math" height="16.015" src="formula-07-05.svg" style="width:3.5104em;height:1.1440em" width="49.146"/>,
+which directly gives us the value of <img alt="𝑠" class="pdf-inline-math" height="15.500" src="formula-07-06.svg" style="width:0.5833em;height:1.1071em" width="8.167"/>. This is feasible because the product
+<img alt="𝑃 [0] ∗ 𝑄[0] ∗ 𝑅[0]" class="pdf-inline-math" height="16.742" src="formula-07-07.svg" style="width:7.5357em;height:1.1959em" width="105.500"/> is smaller than <img alt="𝑝 ∗ 𝑞 ∗ 𝑟" class="pdf-inline-math" height="15.961" src="formula-07-08.svg" style="width:3.4989em;height:1.1400em" width="48.985"/>.</p>
+<div class="math-block pdf-math"><img alt="⎩{⎨{⎧𝑠 = F1(𝑠) mod 𝑝𝑠 = F2(𝑠) mod 𝑞𝑠 = F3(𝑠) mod 𝑟" class="pdf-display-math" height="66.833" src="formula-07-09.svg" style="width:7.9167em;height:4.7738em" width="110.833"/></div>
+<div class="math-block pdf-math"><span class="inline-math-scroll" tabindex="0"><img alt="⇒ {CRT([F1(𝑠), F2(𝑠), F3(𝑠)], [𝑝, 𝑞, 𝑟]) = 𝑠 mod(𝑝 ∗ 𝑞 ∗ 𝑟)" class="pdf-display-math" height="16.136" src="formula-07-10.svg" style="width:24.8214em;height:1.1526em" width="347.500"/></span></div>
+<p>And finally:<span class="inline-math-scroll" tabindex="0"><img alt="𝑃 [0] ∗ 𝑄[0] ∗ 𝑅[0] &lt; 𝑝 ∗ 𝑞 ∗ 𝑟 ⇒ 𝑠 mod(𝑝 ∗ 𝑞 ∗ 𝑟) = 𝑠" class="pdf-inline-math" height="16.555" src="formula-07-11.svg" style="width:22.2500em;height:1.1825em" width="311.500"/></span></p>
+<p><strong>Recovering the Flag:</strong> After recovering <img alt="𝑠" class="pdf-inline-math" height="15.500" src="formula-07-12.svg" style="width:0.5833em;height:1.1071em" width="8.167"/>, we need to add <img alt="𝑅[0]" class="pdf-inline-math" height="16.086" src="formula-07-13.svg" style="width:1.9778em;height:1.1490em" width="27.690"/> to reverse
+the addition in the original script. Once done, we can XOR the result with
+the masked flag value <code>s XOR flag</code> to recover the original flag.</p>
+<p><strong>Note:</strong> To  recover <img alt="𝑅" class="pdf-inline-math" height="12.833" src="formula-07-14.svg" style="width:0.7262em;height:0.9167em" width="10.167"/> <img alt="𝑥" class="pdf-inline-math" height="12.833" src="formula-07-15.svg" style="width:0.5931em;height:0.9167em" width="8.303"/>-coordinate,  (needed  to  recover <img alt="𝑠" class="pdf-inline-math" height="12.833" src="formula-07-16.svg" style="width:0.4881em;height:0.9167em" width="6.833"/>  before <code>s  +=  int(R[0])</code>),  the
+code  extracts  the <img alt="𝑦" class="pdf-inline-math" height="12.926" src="formula-07-17.svg" style="width:0.4881em;height:0.9233em" width="6.833"/>-coordinate <img alt="𝑦𝑅" class="pdf-inline-math" height="15.500" src="formula-07-18.svg" style="width:1.0119em;height:1.1071em" width="14.167"/>  of  the  elliptic  curve  point <img alt="𝑅" class="pdf-inline-math" height="12.833" src="formula-07-19.svg" style="width:0.7262em;height:0.9167em" width="10.167"/>  and  then  computes  the
+possible <img alt="𝑥" class="pdf-inline-math" height="12.833" src="formula-07-20.svg" style="width:0.5833em;height:0.9167em" width="8.167"/>-coordinates  that  satisfy  the  curve’s  equation.  Mathematically,  this  is  equivalent
+to  solving  the  elliptic  curve  equation  for <img alt="𝑥" class="pdf-inline-math" height="12.833" src="formula-07-21.svg" style="width:0.5920em;height:0.9167em" width="8.287"/>  given <img alt="𝑦 = 𝑦𝑅" class="pdf-inline-math" height="14.833" src="formula-07-22.svg" style="width:2.4881em;height:1.0595em" width="34.833"/>  and <img alt="𝑧 = 1" class="pdf-inline-math" height="12.833" src="formula-07-23.svg" style="width:1.9734em;height:0.9167em" width="27.628"/>  in <span class="inline-math-scroll pdf-math-sequence" tabindex="0"><img alt="−𝑥3− 𝑥2∗ 𝑧 + 𝑦2∗" class="pdf-inline-math" height="14.167" src="formula-07-24.svg" style="width:6.7852em;height:1.0119em" width="94.992"/><img alt="𝑧 − 𝑥 ∗ 𝑧2+ 26959946667150639794667015087019630673557916260026308143510066298878 ∗" class="pdf-inline-math" height="14.167" src="formula-07-25.svg" style="width:32.2976em;height:1.0119em" width="452.167"/><img alt="𝑧3= 0" class="pdf-inline-math" height="14.167" src="formula-07-26.svg" style="width:2.3452em;height:1.0119em" width="32.833"/></span>. So by substituting <img alt="𝑦 = 𝑦𝑅" class="pdf-inline-math" height="14.833" src="formula-07-27.svg" style="width:2.4427em;height:1.0595em" width="34.198"/> and <img alt="𝑧 = 1" class="pdf-inline-math" height="12.833" src="formula-07-28.svg" style="width:1.9643em;height:0.9167em" width="27.500"/> (the <img alt="𝑧" class="pdf-inline-math" height="12.833" src="formula-07-29.svg" style="width:0.4881em;height:0.9167em" width="6.833"/> value is used for projective elliptic curves),
+the code transforms the elliptic curve equation into an univariate polynomial in <img alt="𝑥" class="pdf-inline-math" height="12.833" src="formula-07-30.svg" style="width:0.5901em;height:0.9167em" width="8.261"/> and finds
+the roots (possible <img alt="𝑥" class="pdf-inline-math" height="12.833" src="formula-07-31.svg" style="width:0.5833em;height:0.9167em" width="8.167"/>-values) that correspond to <img alt="𝑦𝑅" class="pdf-inline-math" height="14.833" src="formula-07-32.svg" style="width:1.0119em;height:1.0595em" width="14.167"/>. These roots are stored in <code>xRs</code> for further
+iteration.</p>
+<h2 id="section-8">Conclusion</h2>
+<p>This challenge highlights the power of the Chinese Remainder Theorem in
+modular arithmetic, especially when working with cryptographic systems
+based on finite fields. By correctly reconstructing <img alt="𝑠" class="pdf-inline-math" height="15.500" src="formula-08-01.svg" style="width:0.5833em;height:1.1071em" width="8.167"/> through CRT and reversing the XOR operation, we are able to successfully recover the flag.</p>

@@ -1,0 +1,21 @@
+                                                                 2024-09-18
+
+1.2 Known infos
+
+Goal: The ﬂag has been encrypted using RSA with an exponent 𝑒 = 11.
+Our goal is to decrypt the ciphertext, but given the ciphertext size, we need
+to consider a speciﬁc attack vector.
+Informations from chall.py:
+e = 11
+n = p*q                   # where p and q are 2048-bit primes
+ct = FLAG**11 % n
+
+The challenge involves RSA encryption where the modulus 𝑛 is approxi-
+mately 4096 bits. The encrypted ﬂag is FLAG11 mod 𝑛, but the ciphertext
+length gives a critical clue for solving this challenge.
+
+
+
+
+                                                                    Ectario
+                                   3/8

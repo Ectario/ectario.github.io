@@ -1,0 +1,114 @@
+
+
+  <svg class="skills-diagram" viewBox="0 0 800 580" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="about-skills-title about-skills-description">
+    
+    <style>
+      .skills-diagram { background: #1c1d1c; }
+      .skills-dot { fill: #b0b1a9; opacity: .16; }
+      .skills-guides { stroke: #b0b1a9; opacity: .22; }
+      .skills-perimeter { stroke: #c76b24; stroke-opacity: .55; }
+      .skills-spoke { stroke: #c76b24; stroke-opacity: .65; }
+      .skills-hub { stroke: #dc883f; stroke-width: 1.5; }
+      .skills-hub-inner { stroke: #dc883f; stroke-opacity: .3; }
+      .skills-label-background { fill: #1c1d1c; }
+      .skills-node-halo { fill: #dc883f; fill-opacity: .09; }
+      .skills-node-dot { fill: #dc883f; }
+      .skills-label { fill: #eeede7; font: 17px monospace; letter-spacing: .4px; }
+      .skills-detail { fill: #b0b1a9; font: 11.5px sans-serif; }
+      .skills-center { fill: #f3a15a; font: 15px monospace; letter-spacing: 1.4px; }
+      .skills-export-caption { fill: #b0b1a9; font: 9px monospace; letter-spacing: 1.5px; }
+    </style>
+    <rect width="800" height="580" fill="#1c1d1c"/>
+    
+    <title id="about-skills-title">Ectario’s blockchain security skills map</title>
+    <desc id="about-skills-description">Blockchain security at the center, connected to cryptography, EVM, SVM, DeFi, bridges, consensus, nodes and RPC, and the execution layer. Manual review, fuzzing, invariant testing, and multi-agent AI workflows support research across these areas.</desc>
+    <defs>
+      <pattern id="about-skills-dots" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="0.8" class="skills-dot"/></pattern>
+      <linearGradient id="about-skills-fill" x1="335" y1="200" x2="465" y2="380" gradientUnits="userSpaceOnUse"><stop stop-color="#f28c28" stop-opacity=".13"/><stop offset="1" stop-color="#a52020" stop-opacity=".03"/></linearGradient>
+    </defs>
+    <rect width="800" height="580" fill="url(#about-skills-dots)"/>
+    <g class="skills-guides"><circle cx="400" cy="300" r="190" stroke-dasharray="3 8"/><circle cx="400" cy="300" r="150"/><path d="M165 300h470M400 65v455" stroke-dasharray="3 7"/></g>
+    <polygon class="skills-perimeter" points="400,110 534,166 590,300 534,434 400,490 266,434 210,300 266,166 "/>
+    
+      <path class="skills-spoke" d="M400 300 400 110"/>
+    
+      <path class="skills-spoke" d="M400 300 534 166"/>
+    
+      <path class="skills-spoke" d="M400 300 590 300"/>
+    
+      <path class="skills-spoke" d="M400 300 534 434"/>
+    
+      <path class="skills-spoke" d="M400 300 400 490"/>
+    
+      <path class="skills-spoke" d="M400 300 266 434"/>
+    
+      <path class="skills-spoke" d="M400 300 210 300"/>
+    
+      <path class="skills-spoke" d="M400 300 266 166"/>
+    
+    <path class="skills-hub" d="m400 212 76 44v88l-76 44-76-44v-88Z" fill="url(#about-skills-fill)"/>
+    <path class="skills-hub-inner" d="m400 228 62 36v72l-62 36-62-36v-72Z"/>
+    <rect class="skills-label-background" x="331" y="267" width="138" height="66" rx="3"/>
+    <text class="skills-center" x="400" y="294" text-anchor="middle">BLOCKCHAIN</text>
+    <text class="skills-center" x="400" y="316" text-anchor="middle">SECURITY</text>
+    
+      <g class="skills-node">
+        <circle class="skills-node-halo" cx="400" cy="110" r="11"/>
+        <circle class="skills-node-dot" cx="400" cy="110" r="4.5"/>
+        <text class="skills-label" x="400" y="55" text-anchor="middle">Cryptography</text>
+        <text class="skills-detail" x="400" y="78" text-anchor="middle">ZK · signatures · hash functions</text>
+      </g>
+    
+      <g class="skills-node">
+        <circle class="skills-node-halo" cx="534" cy="166" r="11"/>
+        <circle class="skills-node-dot" cx="534" cy="166" r="4.5"/>
+        <text class="skills-label" x="564" y="130" text-anchor="start">EVM</text>
+        <text class="skills-detail" x="564" y="153" text-anchor="start">Solidity · bytecode</text>
+      </g>
+    
+      <g class="skills-node">
+        <circle class="skills-node-halo" cx="590" cy="300" r="11"/>
+        <circle class="skills-node-dot" cx="590" cy="300" r="4.5"/>
+        <text class="skills-label" x="620" y="294" text-anchor="start">SVM</text>
+        <text class="skills-detail" x="620" y="317" text-anchor="start">Solana · Rust · sBPF</text>
+      </g>
+    
+      <g class="skills-node">
+        <circle class="skills-node-halo" cx="534" cy="434" r="11"/>
+        <circle class="skills-node-dot" cx="534" cy="434" r="4.5"/>
+        <text class="skills-label" x="564" y="477" text-anchor="start">DeFi</text>
+        <text class="skills-detail" x="564" y="500" text-anchor="start">Accounting · oracles</text>
+      </g>
+    
+      <g class="skills-node">
+        <circle class="skills-node-halo" cx="400" cy="490" r="11"/>
+        <circle class="skills-node-dot" cx="400" cy="490" r="4.5"/>
+        <text class="skills-label" x="400" y="523" text-anchor="middle">Bridges</text>
+        <text class="skills-detail" x="400" y="546" text-anchor="middle">Messaging · trust boundaries</text>
+      </g>
+    
+      <g class="skills-node">
+        <circle class="skills-node-halo" cx="266" cy="434" r="11"/>
+        <circle class="skills-node-dot" cx="266" cy="434" r="4.5"/>
+        <text class="skills-label" x="236" y="477" text-anchor="end">Consensus</text>
+        <text class="skills-detail" x="236" y="500" text-anchor="end">Validators · agreement</text>
+      </g>
+    
+      <g class="skills-node">
+        <circle class="skills-node-halo" cx="210" cy="300" r="11"/>
+        <circle class="skills-node-dot" cx="210" cy="300" r="4.5"/>
+        <text class="skills-label" x="180" y="294" text-anchor="end">Nodes &amp; RPC</text>
+        <text class="skills-detail" x="180" y="317" text-anchor="end">Clients · APIs · availability</text>
+      </g>
+    
+      <g class="skills-node">
+        <circle class="skills-node-halo" cx="266" cy="166" r="11"/>
+        <circle class="skills-node-dot" cx="266" cy="166" r="4.5"/>
+        <text class="skills-label" x="236" y="130" text-anchor="end">Execution layer</text>
+        <text class="skills-detail" x="236" y="153" text-anchor="end">Transactions · state</text>
+      </g>
+    
+    <circle class="skills-node-dot" cx="400" cy="212" r="3"/>
+    <text class="skills-export-caption" x="400" y="563" text-anchor="middle">MANUAL REVIEW · FUZZING · INVARIANT TESTING · MULTI-AGENT AI</text>
+  </svg>
+
